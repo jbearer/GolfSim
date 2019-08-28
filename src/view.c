@@ -2,6 +2,7 @@
 #include <stdlib.h>
 
 #include <GL/glew.h>
+#include <GLFW/glfw3.h>
 
 #include "errors.h"
 #include "gl.h"
@@ -10,23 +11,169 @@
 #include "view.h"
 
 typedef enum {
-    VERTEX_ATTRIB_POSITION
+    VERTEX_ATTRIB_POSITION = 0,
+    VERTEX_ATTRIB_COLOR = 1,
 } VertexAttribute;
 
+typedef struct {
+    GLuint vao;
+    GLuint positions;
+    GLuint colors;
+} Axis;
+
+static void Axis_Init(Axis *axis, const vec3 *v, const vec3 *color)
+{
+    vec3 positions[2] = {0};
+    vec3 colors[2] = { *color, *color };
+    vec3_Scale(1000, v, &positions[1]);
+
+    // Create VAO
+    glGenVertexArrays(1, &axis->vao);
+    glBindVertexArray(axis->vao);
+    {
+        // Initialize position buffer
+        glGenBuffers(1, &axis->positions);
+        glBindBuffer(GL_ARRAY_BUFFER, axis->positions);
+        {
+            glBufferData(
+                GL_ARRAY_BUFFER, sizeof(positions), positions, GL_STATIC_DRAW);
+            glVertexAttribPointer(
+                VERTEX_ATTRIB_POSITION, 3, GL_FLOAT, GL_FALSE, 0, 0);
+            glEnableVertexAttribArray(VERTEX_ATTRIB_POSITION);
+        }
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+        // Initialize color buffer
+        glGenBuffers(1, &axis->colors);
+        glBindBuffer(GL_ARRAY_BUFFER, axis->colors);
+        {
+            glBufferData(
+                GL_ARRAY_BUFFER, sizeof(colors), colors, GL_STATIC_DRAW);
+            glVertexAttribPointer(
+                VERTEX_ATTRIB_COLOR, 3, GL_FLOAT, GL_FALSE, 0, 0);
+            glEnableVertexAttribArray(VERTEX_ATTRIB_COLOR);
+        }
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    }
+    glBindVertexArray(0);
+}
+
+static void Axis_Render(const Axis *axis)
+{
+    glBindVertexArray(axis->vao);
+    {
+        glDrawArrays(GL_LINES, 0, 2);
+    }
+    glBindVertexArray(0);
+}
+
 struct View {
-    Terrain *terrain;
+    GLFWwindow *window;
+    const Terrain *terrain;
     uint32_t num_vertices;
 
-    GLuint gl_vertices;
-    GLuint gl_position_buffer;
-    GLuint gl_terrain_shaders;
+    mat4 projection;
+        // Perspective projection matrix for the scene. Converts camera
+        // coordinates to screen coordinates. This is initialized once and never
+        // changes.
+    mat4 view_projection;
+        // `projection` right-multiplied by a view matrix which converts world
+        // coordinates to camera coordinates. Overall, this matrix converts
+        // world coordinates to screen coordinates. This matrix needs to be
+        // recomputed whenever the camera changes position or orientation.
+        //
+        // Right-multiply this matrix by a model matrix to map model coordinates
+        // to screen coordinates.
+
+    // Terrain GL objects
+    GLuint gl_terrain_vao;          // Vertex array object
+    GLuint gl_terrain_positions;    // Position buffer
+    GLuint gl_terrain_shaders;      // Shader program
+    GLuint gl_terrain_shader_mvp;   // MVP matrix
+
+    // Axis GL objects
+    Axis x_axis;
+    Axis y_axis;
+    Axis z_axis;
+    GLuint gl_axis_shaders;
+    GLuint gl_axis_shader_mvp;
 };
 
-View *View_New(Terrain *terrain)
+View *View_New(GLFWwindow *window, const Terrain *terrain)
 {
     View *view = Malloc(sizeof(View));
 
+    view->window = window;
     view->terrain = terrain;
+
+    ////////////////////////////////////////////////////////////////////////////
+    // Initialize view matrices
+    //
+
+    // Initialize the perspective projection.
+    int window_width, window_height;
+    glfwGetWindowSize(window, &window_width, &window_height);
+    mat4_Perspective(&view->projection,
+        M_PI/3,
+            // pi/3, or 60 degree, field of vision.
+        (float)window_width/window_height,
+            // Aspect ratio is determined by window size.
+        1.0, 1000.0
+            // We use 1-yard for the near clipping plane and 1000y for the far.
+    );
+
+    // Initialize camera position:                                            //
+    //                                                                        //
+    // Top view:                                                              //
+    //                                                                        //
+    //              -------------           y                                 //
+    //              |           |           ^                                 //
+    //              |  Terrain  |           |                                 //
+    //              |           |          z.--> x                            //
+    //              |           |                                             //
+    //              -------------                                             //
+    //            ,/                                                          //
+    //           /                                                            //
+    //         CAM                                                            //
+    //                                                                        //
+    // Side view:                                                             //
+    //                                                                        //
+    //      CAM                             z                                 //
+    //         \                            ^                                 //
+    //           \                          |                                 //
+    //             ---------------------   yo--> x                            //
+    //                    Terrain                                             //
+    //
+    // Initialize with identity matrix.
+    mat4_Copy(&view->view_projection, &I4);
+
+    // First rotate to an isometric perspective
+    mat4 m;
+    mat4_Rotation(&m, M_PI/4, &z3);
+    mat4_ComposeInPlace(&m, &view->view_projection);
+        // Rotating the world 45 degrees (pi/4 radians) about the z-axis
+        // effectively rotates the camera -45 degrees about the same axis,
+        // so it points diagonally out from the origin, bisecting the angle
+        // between the x and y axes.
+    mat4_Rotation(&m, -M_PI/4, &x3);
+    mat4_ComposeInPlace(&m, &view->view_projection);
+        // Rotating the world -45 degrees (-pi/4 radians) about the x axis
+        // effectively rotates the camera 45 degrees about the same axis, so it
+        // points down towards the terrain but no longer straight down.
+    vec3 zoom_out = {0, 0, -100};
+    mat4_Translation(&m, &zoom_out);
+    mat4_ComposeInPlace(&m, &view->view_projection);
+        // Now the z-axis angles isometrically away from the terrain. We move
+        // the terrain 100yds further down the z axis, effectively zooming out
+        // 100yds. Now we're in camera coordinates.
+    mat4_ComposeInPlace(&view->projection, &view->view_projection);
+        // Apply the perspective projection, so `view_projection` now maps from
+        // world space to screen space.
+
+    ////////////////////////////////////////////////////////////////////////////
+    // Initialize terrain data
+    //
 
     // Create vertex data
     view->num_vertices = 6*Terrain_NumFaces(terrain);
@@ -67,37 +214,91 @@ View *View_New(Terrain *terrain)
     }
 
     // Initialize vertex array
-    glGenVertexArrays(1, &view->gl_vertices);
-    glBindVertexArray(view->gl_vertices);
+    glGenVertexArrays(1, &view->gl_terrain_vao);
+    glBindVertexArray(view->gl_terrain_vao);
+    {
 
-    // Initialize vertex buffer
-    glGenBuffers(1, &view->gl_position_buffer);
-    glBindBuffer(GL_ARRAY_BUFFER, view->gl_position_buffer);
-    glBufferData(
-        GL_ARRAY_BUFFER,
-        sizeof(vec3)*view->num_vertices,
-        positions,
-        GL_DYNAMIC_DRAW
-    );
-
-    // GL has copied the vertex data into GPU memory, so we can free our buffer.
+        // Initialize vertex buffer
+        glGenBuffers(1, &view->gl_terrain_positions);
+        glBindBuffer(GL_ARRAY_BUFFER, view->gl_terrain_positions);
+        {
+            glBufferData(
+                GL_ARRAY_BUFFER,
+                sizeof(vec3)*view->num_vertices,
+                positions,
+                GL_DYNAMIC_DRAW
+            );
+            glVertexAttribPointer(
+                VERTEX_ATTRIB_POSITION, 3, GL_FLOAT, GL_FALSE, 0, 0);
+            glEnableVertexAttribArray(VERTEX_ATTRIB_POSITION);
+        }
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+    glBindVertexArray(0);
     free(positions);
+        // GL has copied the vertex data into GPU memory, so we can free our
+        // buffer.
 
-    // Load shaders
+    ////////////////////////////////////////////////////////////////////////////
+    // Initialize axis data
+    //
+
+    Axis_Init(&view->x_axis, &x3, &RGB_RED);
+    Axis_Init(&view->y_axis, &y3, &RGB_GREEN);
+    Axis_Init(&view->z_axis, &z3, &RGB_BLUE);
+
+    ////////////////////////////////////////////////////////////////////////////
+    // Load shader programs
+    //
+
     view->gl_terrain_shaders = GL_LoadShaders(
         "shaders/terrain_vertex.glsl", "shaders/terrain_fragment.glsl");
+    view->gl_terrain_shader_mvp = glGetUniformLocation(
+        view->gl_terrain_shaders, "mvp");
+    view->gl_axis_shaders = GL_LoadShaders(
+        "shaders/axis_vertex.glsl", "shaders/axis_fragment.glsl");
+    view->gl_axis_shader_mvp = glGetUniformLocation(
+        view->gl_axis_shaders, "mvp");
+
+    ////////////////////////////////////////////////////////////////////////////
+    // Initialization complete
+    //
+
+    trace("Initialized view:\n", 0);
+    trace("    projection:\n"
+          "%s\n",
+          mat4_String(&view->projection)
+    );
+    trace("    view_projection:\n"
+          "%s\n",
+          mat4_String(&view->view_projection)
+    );
 
     return view;
 }
 
 void View_Render(View *view)
 {
+    // Draw terrain
     glUseProgram(view->gl_terrain_shaders);
+    glUniformMatrix4fv(
+        view->gl_terrain_shader_mvp, 1, GL_TRUE,
+        mat4_Buffer(&view->view_projection)
+    );
 
-    glEnableVertexAttribArray(VERTEX_ATTRIB_POSITION);
-    glBindBuffer(GL_ARRAY_BUFFER, view->gl_position_buffer);
-    glVertexAttribPointer(
-        VERTEX_ATTRIB_POSITION, 3, GL_FLOAT, GL_FALSE, 0, 0);
-    glDrawArrays(GL_TRIANGLES, 0, view->num_vertices);
-    glDisableVertexAttribArray(VERTEX_ATTRIB_POSITION);
+    glBindVertexArray(view->gl_terrain_vao);
+    {
+        glDrawArrays(GL_LINES, 0, view->num_vertices);
+    }
+
+    // Draw axes
+    glUseProgram(view->gl_axis_shaders);
+    glUniformMatrix4fv(
+        view->gl_axis_shader_mvp, 1, GL_TRUE,
+        mat4_Buffer(&view->view_projection)
+    );
+
+    Axis_Render(&view->x_axis);
+    Axis_Render(&view->y_axis);
+    Axis_Render(&view->z_axis);
 }

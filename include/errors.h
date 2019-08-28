@@ -8,6 +8,14 @@
 #define GOLF_ERRORS_H
 
 typedef enum {
+    LOG_TRACE,
+    LOG_DEBUG,
+    LOG_INFO,
+    LOG_WARN,
+    LOG_ERROR,
+} LogLevel;
+
+typedef enum {
     FATAL
 } ErrorLevel;
 
@@ -27,6 +35,35 @@ typedef enum {
  *              recovery. Usually a NULL-terminated string with a message.
  */
 void Error_Raise(ErrorLevel level, Error error, void *arg);
+
+/**
+ * \brief Get notified when a fatal error occurs.
+ *
+ * \param f     Function to be called when a fatal error occurs. The first
+ *              argument will be the code of the error. The second argument will
+ *              be the final argument passed to `Error_Raise`. The third
+ *              argument can be arbitrary data.
+ * \param arg   Third argument to be passed to `f`.
+ */
+void Error_SetFatalErrorCallback(void(*f)(Error, void *, void *), void *arg);
+
+/**
+ * \brief Log a message.
+ *
+ * Accepts variadic arguments a la printf.
+ */
+void Error_SetMinimumLogLevel(LogLevel level);
+void Error_Log(LogLevel level, const char *fmt, ...);
+#ifndef NDEBUG
+#define trace(fmt, ...) Error_Log(LOG_TRACE, fmt, __VA_ARGS__)
+#define debug(fmt, ...) Error_Log(LOG_DEBUG, fmt, __VA_ARGS__)
+#else
+#define trace(fmt, ...)
+#define debug(fmt, ...)
+#endif
+#define info(fmt, ...) Error_Log(LOG_INFO, fmt, __VA_ARGS__)
+#define warn(fmt, ...) Error_Log(LOG_WARN, fmt, __VA_ARGS__)
+#define error(fmt, ...) Error_Log(LOG_ERROR, fmt, __VA_ARGS__)
 
 /**
  * \brief Allocate memory, terminating the program on failure.

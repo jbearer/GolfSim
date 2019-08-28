@@ -9,6 +9,8 @@
 
 #include <GL/glew.h>
 
+#include "matrix.h"
+
 /**
  * \brief Compile and link a GLSL shader program.
  *
@@ -28,5 +30,9 @@
  * \return ID for the compiled shader program.
  */
 GLuint GL_LoadShaders(const char *vertex_path, const char *fragment_path);
+
+static const vec3 RGB_RED = { 1, 0, 0 };
+static const vec3 RGB_GREEN = { 0, 1, 0 };
+static const vec3 RGB_BLUE = { 0, 0, 1 };
 
 #endif

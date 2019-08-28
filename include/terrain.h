@@ -26,7 +26,7 @@ typedef struct {
  * \details
  *      This is the number of edges along the top or bottom edge of the terrain.
  */
-static inline uint16_t Terrain_FaceWidth(Terrain *terrain)
+static inline uint16_t Terrain_FaceWidth(const Terrain *terrain)
 {
     return terrain->width;
 }
@@ -37,7 +37,7 @@ static inline uint16_t Terrain_FaceWidth(Terrain *terrain)
  * \details
  *      This is the number of edges along the left or right edge of the terrain.
  */
-static inline uint16_t Terrain_FaceHeight(Terrain *terrain)
+static inline uint16_t Terrain_FaceHeight(const Terrain *terrain)
 {
     return terrain->height;
 }
@@ -48,7 +48,7 @@ static inline uint16_t Terrain_FaceHeight(Terrain *terrain)
  * \details
  *      Equivalent to `Terrain_FaceWidth(terrain) * Terrain_FaceHeight(terrain)`
  */
-static inline uint32_t Terrain_NumFaces(Terrain *terrain)
+static inline uint32_t Terrain_NumFaces(const Terrain *terrain)
 {
     return Terrain_FaceWidth(terrain) * Terrain_FaceHeight(terrain);
 }
@@ -60,7 +60,7 @@ static inline uint32_t Terrain_NumFaces(Terrain *terrain)
  *      This is the number of vertices along the top or bottom edge of the
  *      terrain. Equivalent to `Terrain_FaceWidth(terrain) + 1`.
  */
-static inline uint16_t Terrain_VertexWidth(Terrain *terrain)
+static inline uint16_t Terrain_VertexWidth(const Terrain *terrain)
 {
     return 1 + Terrain_FaceWidth(terrain);
 }
@@ -72,7 +72,7 @@ static inline uint16_t Terrain_VertexWidth(Terrain *terrain)
  *      This is the number of vertices along the left or right edge of the
  *      terrain. Equivalent to `Terrain_FaceHeight(terrain) + 1`.
  */
-static inline uint16_t Terrain_VertexHeight(Terrain *terrain)
+static inline uint16_t Terrain_VertexHeight(const Terrain *terrain)
 {
     return 1 + Terrain_FaceHeight(terrain);
 }
@@ -84,7 +84,7 @@ static inline uint16_t Terrain_VertexHeight(Terrain *terrain)
  *      Equivalent to
  *      `Terrain_VertexWidth(terrain) * Terrain_VertexHeight(terrain)`.
  */
-static inline uint32_t Terrain_NumVertices(Terrain *terrain)
+static inline uint32_t Terrain_NumVertices(const Terrain *terrain)
 {
     return Terrain_VertexWidth(terrain) * Terrain_VertexHeight(terrain);
 }

@@ -14,13 +14,23 @@
 static void GlError(int error, const char *msg)
 {
     fprintf(stderr, "OpenGL error %d: %s\n", error, msg);
+    glfwTerminate();
     exit(1);
+}
+
+static void GolfError(Error error, void *error_data, void *arg)
+{
+    (void)error;
+    (void)error_data;
+    (void)arg;
+    glfwTerminate();
 }
 
 int main(void)
 {
     glewExperimental = true;
 
+    Error_SetFatalErrorCallback(GolfError, NULL);
     glfwSetErrorCallback(GlError);
 
     // Initialize GLFW
@@ -54,9 +64,10 @@ int main(void)
     // Initialize game objects
     Terrain terrain;
     Terrain_Init(&terrain, 256, 256);
-    View *view = View_New(&terrain);
+    View *view = View_New(window, &terrain);
 
     // Main loop
+    glEnable(GL_DEPTH_TEST);
     while (!glfwWindowShouldClose(window)) {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
