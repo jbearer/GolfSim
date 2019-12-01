@@ -8,5 +8,5 @@ out vec4 color;
 void main()
 {
     color.xyz = frag_color;
-    color.a = 0.5;
+    color.a = 0.75;
 }

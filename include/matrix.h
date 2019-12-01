@@ -17,6 +17,11 @@
 typedef struct {
     float x;
     float y;
+} vec2;
+
+typedef struct {
+    float x;
+    float y;
     float z;
 } vec3;
 
@@ -82,6 +87,64 @@ static inline const float *vec4_ConstBuffer(const vec4 *v)
 {
     return (const float *)v;
 }
+
+typedef struct {
+    float M[3][3];
+} mat3;
+
+static const mat3 I3 = {{
+    { 1, 0, 0 },
+    { 0, 1, 0 },
+    { 0, 0, 1 },
+}};
+
+static inline void mat3_Copy(mat3 * restrict dst, const mat3 * restrict src)
+{
+    memcpy(dst, src, sizeof(mat3));
+}
+
+static inline void mat3_Scale(mat3 *m, const vec2 *v)
+{
+    *m = (mat3) {{
+        { v->x, 0,    0 },
+        { 0,    v->y, 0 },
+        { 0,    0,    1 },
+    }};
+}
+
+static inline void mat3_Translation(mat3 *m, const vec2 *v)
+{
+    *m = (mat3) {{
+        { 1, 0, v->x },
+        { 0, 1, v->y },
+        { 0, 0, 1    },
+    }};
+}
+
+void mat3_Compose(
+    const mat3 * restrict A, const mat3 * restrict B, mat3 * restrict out);
+void mat3_ComposeInPlace(const mat3 * restrict src, mat3 * restrict dst);
+
+/**
+ * \brief A contiguous array of floats containing the data in matrix `m`.
+ *
+ * The returned buffer is guaranteed to be in a format which OpenGL will
+ * understand as a `mat3`. The returned storate lives as long as `m`.
+ */
+static inline const float *mat3_ConstBuffer(const mat3 *m)
+{
+    return (const float *)m;
+}
+
+#ifndef NDEBUG
+/**
+ * \brief Get a string representation of a matrix.
+ *
+ * The returned pointer may refer to static storage. As such, it is only valid
+ * until the next call to `mat3_String`.
+ */
+const char *mat3_String(mat3 *m);
+#endif
 
 typedef struct {
     float M[4][4];

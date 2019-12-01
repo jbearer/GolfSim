@@ -11,6 +11,13 @@
 
 #include "matrix.h"
 
+typedef enum {
+    VERTEX_ATTRIB_POSITION = 0,
+    VERTEX_ATTRIB_COLOR = 1,
+    VERTEX_ATTRIB_TEXTURE_UV = 2,
+    VERTEX_ATTRIB_CURSOR = 3,
+} VertexAttribute;
+
 /**
  * \brief Compile and link a GLSL shader program.
  *
@@ -30,6 +37,8 @@
  * \return ID for the compiled shader program.
  */
 GLuint GL_LoadShaders(const char *vertex_path, const char *fragment_path);
+
+GLuint GL_LoadTexture(const char *bmp_path);
 
 static const vec3 RGB_RED = { 1, 0, 0 };
 static const vec3 RGB_GREEN = { 0, 1, 0 };

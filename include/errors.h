@@ -7,6 +7,8 @@
 #ifndef GOLF_ERRORS_H
 #define GOLF_ERRORS_H
 
+#include <stdlib.h>
+
 typedef enum {
     LOG_TRACE,
     LOG_DEBUG,

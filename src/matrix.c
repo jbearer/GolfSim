@@ -20,6 +20,46 @@ void vec4_Quaternion(vec4 *v, float radians, const vec3 *axis)
     v->w = cosf(radians/2);
 }
 
+void mat3_Compose(
+    const mat3 * restrict A, const mat3 * restrict B, mat3 * restrict out)
+{
+    for (uint8_t row = 0; row < 3; ++row) {
+        for (uint8_t col = 0; col < 3; ++col) {
+            out->M[row][col] = 0;
+            for (uint8_t i = 0; i < 3; ++i) {
+                out->M[row][col] += A->M[row][i]*B->M[i][col];
+            }
+        }
+    }
+}
+
+void mat3_ComposeInPlace(const mat3 * restrict src, mat3 * restrict dst)
+{
+    mat3 tmp;
+    mat3_Compose(src, dst, &tmp);
+    mat3_Copy(dst, &tmp);
+}
+
+
+#ifndef NDEBUG
+const char *mat3_String(mat3 *m)
+{
+    static char buf[(8*3 + 3)*3 + 1];
+        // up to 8 characters per entry. 3 whitespace characters per row. 3
+        // rows. 1 NULL terminator.
+    snprintf(buf, sizeof(buf),
+        "%7.3f %7.3f %7.3f\n"
+        "%7.3f %7.3f %7.3f\n"
+        "%7.3f %7.3f %7.3f\n",
+        m->M[0][0], m->M[0][1], m->M[0][2],
+        m->M[1][0], m->M[1][1], m->M[1][2],
+        m->M[2][0], m->M[2][1], m->M[2][2]);
+
+    return buf;
+}
+#endif
+
+
 void mat4_FromQuaternion(mat4 *m, const vec4 *q)
 {
     float x = q->x;

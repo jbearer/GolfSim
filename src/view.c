@@ -8,12 +8,8 @@
 #include "gl.h"
 #include "matrix.h"
 #include "terrain.h"
+#include "text.h"
 #include "view.h"
-
-typedef enum {
-    VERTEX_ATTRIB_POSITION = 0,
-    VERTEX_ATTRIB_COLOR = 1,
-} VertexAttribute;
 
 typedef struct {
     GLuint vao;
@@ -72,6 +68,7 @@ struct View {
     GLFWwindow *window;
     const Terrain *terrain;
     uint32_t num_vertices;
+    Console console;
 
     mat4 projection;
         // Perspective projection matrix for the scene. Converts camera
@@ -87,12 +84,14 @@ struct View {
         // to screen coordinates.
 
     // Terrain GL objects
+    bool show_terrain;
     GLuint gl_terrain_vao;          // Vertex array object
     GLuint gl_terrain_positions;    // Position buffer
     GLuint gl_terrain_shaders;      // Shader program
     GLuint gl_terrain_shader_mvp;   // MVP matrix
 
     // Axis GL objects
+    bool show_axes;
     Axis x_axis;
     Axis y_axis;
     Axis z_axis;
@@ -100,12 +99,16 @@ struct View {
     GLuint gl_axis_shader_mvp;
 };
 
+static Command view_program;
+
 View *View_New(GLFWwindow *window, const Terrain *terrain)
 {
     View *view = Malloc(sizeof(View));
 
     view->window = window;
     view->terrain = terrain;
+    view->show_terrain = true;
+    view->show_axes = true;
 
     ////////////////////////////////////////////////////////////////////////////
     // Initialize view matrices
@@ -261,6 +264,19 @@ View *View_New(GLFWwindow *window, const Terrain *terrain)
         view->gl_axis_shaders, "mvp");
 
     ////////////////////////////////////////////////////////////////////////////
+    // Initialize console
+    //
+
+    Console_Init(&view->console,
+        window,
+        0,                      // x            (pixels)
+        window_height,          // y            (pixels)
+        80,                     // width        (columns)
+        window_height/15,       // height       (rows)
+        15,                     // font size    (height in pixels)
+        &view_program, view);
+
+    ////////////////////////////////////////////////////////////////////////////
     // Initialization complete
     //
 
@@ -279,26 +295,88 @@ View *View_New(GLFWwindow *window, const Terrain *terrain)
 
 void View_Render(View *view)
 {
-    // Draw terrain
-    glUseProgram(view->gl_terrain_shaders);
-    glUniformMatrix4fv(
-        view->gl_terrain_shader_mvp, 1, GL_TRUE,
-        mat4_Buffer(&view->view_projection)
-    );
+    Console_Render(&view->console);
 
-    glBindVertexArray(view->gl_terrain_vao);
-    {
-        glDrawArrays(GL_LINES, 0, view->num_vertices);
+    if (view->show_terrain) {
+        // Draw terrain
+        glUseProgram(view->gl_terrain_shaders);
+        glUniformMatrix4fv(
+            view->gl_terrain_shader_mvp, 1, GL_TRUE,
+            mat4_Buffer(&view->view_projection)
+        );
+
+        glBindVertexArray(view->gl_terrain_vao);
+        {
+            glDrawArrays(GL_LINES, 0, view->num_vertices);
+        }
+        glBindVertexArray(0);
     }
 
-    // Draw axes
-    glUseProgram(view->gl_axis_shaders);
-    glUniformMatrix4fv(
-        view->gl_axis_shader_mvp, 1, GL_TRUE,
-        mat4_Buffer(&view->view_projection)
-    );
+    if (view->show_axes) {
+        // Draw axes
+        glUseProgram(view->gl_axis_shaders);
+        glUniformMatrix4fv(
+            view->gl_axis_shader_mvp, 1, GL_TRUE,
+            mat4_Buffer(&view->view_projection)
+        );
 
-    Axis_Render(&view->x_axis);
-    Axis_Render(&view->y_axis);
-    Axis_Render(&view->z_axis);
+        Axis_Render(&view->x_axis);
+        Axis_Render(&view->y_axis);
+        Axis_Render(&view->z_axis);
+    }
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// Console program
+//
+
+#define PROGRAM_INFO(info) \
+    info(PROG_ID, view_program) \
+    info(PROG_STATE_TYPE, View) \
+    info(PROG_STATE_NAME, view)
+
+DECLARE_RUNNABLE(show_axes, "axes", "enable rendering of X, Y, and Z axes")
+{
+    (void)console;
+    (void)argc;
+    (void)argv;
+
+    view->show_axes = true;
+}
+
+DECLARE_RUNNABLE(show_terrain, "terrain", "enable rendering of terrain mesh")
+{
+    (void)console;
+    (void)argc;
+    (void)argv;
+
+    view->show_terrain = true;
+}
+
+DECLARE_SUB_COMMANDS(show, "show", "enable rendering of scene entities",
+    &show_axes, &show_terrain);
+
+DECLARE_RUNNABLE(hide_axes, "axes", "disable rendering of X, Y, and Z axes")
+{
+    (void)console;
+    (void)argc;
+    (void)argv;
+
+    view->show_axes = false;
+}
+
+DECLARE_RUNNABLE(hide_terrain, "terrain", "disable rendering of terrain mesh")
+{
+    (void)console;
+    (void)argc;
+    (void)argv;
+
+    view->show_terrain = false;
+}
+
+DECLARE_SUB_COMMANDS(hide, "hide", "disable rendering of scene entities",
+    &hide_axes, &hide_terrain);
+
+DECLARE_PROGRAM(&show, &hide);
+
+#undef PROGRAM_INFO
