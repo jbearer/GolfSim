@@ -10,14 +10,37 @@
 #include <assert.h>
 #include <stdint.h>
 
-typedef struct {
-    uint16_t z;
-} Vertex;
+#include "matrix.h"
 
 typedef struct {
-    uint16_t width;     /// Number of edges
-    uint16_t height;    /// Number of edges
-    Vertex *vertices;   /// Dimension (width + 1) x (height + 1)
+    vec4 color;
+} Material;
+
+extern const Material fairway;
+extern const Material rough;
+
+typedef struct {
+    uint16_t vertices[4];       ///< \brief z-coordinate of the four vertices
+                                ///<
+                                ///< ```
+                                ///<    vertices[0]     vertices[1]
+                                ///<        o----------------o
+                                ///<        |                |
+                                ///<        |                |
+                                ///<        |                |
+                                ///<        |                |
+                                ///<        |                |
+                                ///<        o----------------o
+                                ///<    vertices[3]     vertices[2]
+                                ///< ```
+                                ///<
+    const Material *material;   ///< Material covering this area.
+} Face;
+
+typedef struct {
+    uint16_t width;     ///< Number of edges
+    uint16_t height;    ///< Number of edges
+    Face *faces;        ///< Dimension width x height
 } Terrain;
 
 /**
@@ -87,6 +110,40 @@ static inline uint16_t Terrain_VertexHeight(const Terrain *terrain)
 static inline uint32_t Terrain_NumVertices(const Terrain *terrain)
 {
     return Terrain_VertexWidth(terrain) * Terrain_VertexHeight(terrain);
+}
+
+/**
+ * \brief Get a reference to the face at a given position.
+ *
+ * \pre
+ * `row < Terrain_FaceWidth(terrain)`
+ *
+ * \pre
+ * `col < Terrain_FaceHeight(terrain)`
+ */
+static inline Face *Terrain_GetFace(
+    Terrain *terrain, uint16_t row, uint16_t col)
+{
+    assert(row < Terrain_FaceHeight(terrain));
+    assert(col < Terrain_FaceWidth(terrain));
+    return &terrain->faces[row*Terrain_FaceWidth(terrain) + col];
+}
+
+/**
+ * \brief Get a reference to the face at a given position.
+ *
+ * \pre
+ * `row < Terrain_FaceWidth(terrain)`
+ *
+ * \pre
+ * `col < Terrain_FaceHeight(terrain)`
+ */
+static inline const Face *Terrain_GetConstFace(
+    const Terrain *terrain, uint16_t row, uint16_t col)
+{
+    assert(row < Terrain_FaceHeight(terrain));
+    assert(col < Terrain_FaceWidth(terrain));
+    return &terrain->faces[row*Terrain_FaceWidth(terrain) + col];
 }
 
 /**

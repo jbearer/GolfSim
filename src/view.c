@@ -254,6 +254,10 @@ View *View_New(GLFWwindow *window, const Terrain *terrain)
         for (uint16_t col = 0; col < Terrain_FaceHeight(terrain); ++col) {
             assert(i < view->num_vertices);
 
+            const Face *face = Terrain_GetConstFace(terrain, row, col);
+            const uint16_t *z = face->vertices;
+
+
             // We will draw a square face using two triangles, like this:
             //
             //        col   col+1
@@ -268,14 +272,14 @@ View *View_New(GLFWwindow *window, const Terrain *terrain)
             //
 
             // Triangle A: (row, col), (row, col+1), (row+1, col)
-            positions[i++] = (vec3){ row,   col,   0 };
-            positions[i++] = (vec3){ row,   col+1, 0 };
-            positions[i++] = (vec3){ row+1, col,   0 };
+            positions[i++] = (vec3){ row,   col,   z[0] };
+            positions[i++] = (vec3){ row,   col+1, z[1] };
+            positions[i++] = (vec3){ row+1, col,   z[3] };
 
             // Triangle B: (row+1, col+1), (row, col+1), (row+1, col)
-            positions[i++] = (vec3){ row+1, col+1, 0 };
-            positions[i++] = (vec3){ row,   col+1, 0 };
-            positions[i++] = (vec3){ row+1, col,   0 };
+            positions[i++] = (vec3){ row+1, col+1, z[2] };
+            positions[i++] = (vec3){ row,   col+1, z[1] };
+            positions[i++] = (vec3){ row+1, col,   z[3] };
         }
     }
 
