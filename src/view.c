@@ -85,10 +85,12 @@ struct View {
 
     // Terrain GL objects
     bool show_terrain;
+    bool show_terrain_mesh;
     GLuint gl_terrain_vao;          // Vertex array object
     GLuint gl_terrain_positions;    // Position buffer
     GLuint gl_terrain_shaders;      // Shader program
     GLuint gl_terrain_shader_mvp;   // MVP matrix
+    GLuint gl_terrain_shader_mesh;  // Mesh flag
 
     // Axis GL objects
     bool show_axes;
@@ -254,10 +256,15 @@ View *View_New(GLFWwindow *window, const Terrain *terrain)
     // Load shader programs
     //
 
+    // Terrain shader
     view->gl_terrain_shaders = GL_LoadShaders(
         "shaders/terrain_vertex.glsl", "shaders/terrain_fragment.glsl");
     view->gl_terrain_shader_mvp = glGetUniformLocation(
         view->gl_terrain_shaders, "mvp");
+    view->gl_terrain_shader_mesh = glGetUniformLocation(
+        view->gl_terrain_shaders, "mesh");
+
+    // Axis shader
     view->gl_axis_shaders = GL_LoadShaders(
         "shaders/axis_vertex.glsl", "shaders/axis_fragment.glsl");
     view->gl_axis_shader_mvp = glGetUniformLocation(
@@ -300,11 +307,19 @@ void View_Render(View *view)
     if (view->show_terrain) {
         // Draw terrain
         glUseProgram(view->gl_terrain_shaders);
-        glUniformMatrix4fv(
-            view->gl_terrain_shader_mvp, 1, GL_TRUE,
-            mat4_Buffer(&view->view_projection)
-        );
+        glUniform1ui(view->gl_terrain_shader_mesh, 0);
 
+        glBindVertexArray(view->gl_terrain_vao);
+        {
+            glDrawArrays(GL_TRIANGLES, 0, view->num_vertices);
+        }
+        glBindVertexArray(0);
+    }
+
+    if (view->show_terrain_mesh) {
+        // Draw terrain mesh
+        glUseProgram(view->gl_terrain_shaders);
+        glUniform1ui(view->gl_terrain_shader_mesh, 1);
         glBindVertexArray(view->gl_terrain_vao);
         {
             glDrawArrays(GL_LINES, 0, view->num_vertices);
@@ -315,11 +330,6 @@ void View_Render(View *view)
     if (view->show_axes) {
         // Draw axes
         glUseProgram(view->gl_axis_shaders);
-        glUniformMatrix4fv(
-            view->gl_axis_shader_mvp, 1, GL_TRUE,
-            mat4_Buffer(&view->view_projection)
-        );
-
         Axis_Render(&view->x_axis);
         Axis_Render(&view->y_axis);
         Axis_Render(&view->z_axis);
@@ -334,6 +344,10 @@ void View_Render(View *view)
     info(PROG_ID, view_program) \
     info(PROG_STATE_TYPE, View) \
     info(PROG_STATE_NAME, view)
+
+////////////////////////////////////////////////////////////////////////////////
+// Show
+//
 
 DECLARE_RUNNABLE(show_axes, "axes", "enable rendering of X, Y, and Z axes")
 {
@@ -353,8 +367,22 @@ DECLARE_RUNNABLE(show_terrain, "terrain", "enable rendering of terrain mesh")
     view->show_terrain = true;
 }
 
+DECLARE_RUNNABLE(
+    show_terrain_mesh, "terrain-mesh", "enable rendering of terrain mesh")
+{
+    (void)console;
+    (void)argc;
+    (void)argv;
+
+    view->show_terrain_mesh = true;
+}
+
 DECLARE_SUB_COMMANDS(show, "show", "enable rendering of scene entities",
-    &show_axes, &show_terrain);
+    &show_axes, &show_terrain, &show_terrain_mesh);
+
+////////////////////////////////////////////////////////////////////////////////
+// Hide
+//
 
 DECLARE_RUNNABLE(hide_axes, "axes", "disable rendering of X, Y, and Z axes")
 {
@@ -372,6 +400,16 @@ DECLARE_RUNNABLE(hide_terrain, "terrain", "disable rendering of terrain mesh")
     (void)argv;
 
     view->show_terrain = false;
+}
+
+DECLARE_RUNNABLE(
+    hide_terrain_mesh, "terrain-mesh", "disable rendering of terrain mesh")
+{
+    (void)console;
+    (void)argc;
+    (void)argv;
+
+    view->show_terrain_mesh = false;
 }
 
 DECLARE_SUB_COMMANDS(hide, "hide", "disable rendering of scene entities",

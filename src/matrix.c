@@ -70,6 +70,9 @@ void mat4_FromQuaternion(mat4 *m, const vec4 *q)
     float x2 = x*x;
     float y2 = y*y;
     float z2 = z*z;
+    float w2 = w*w;
+
+    assert(x2 + y2 + z2 + w2 == 1);
 
     *m = (mat4) {{
         { (1 - 2*y2 - 2*z2), (2*x*y - 2*z*w),   (2*x*z + 2*y*w),   0 },
@@ -96,9 +99,19 @@ void mat4_Rotation(mat4 *m, float radians, const vec3 *axis)
 
 void mat4_Perspective(mat4 *m, float fov, float aspect, float near, float far)
 {
-    // This projection matrix is stolen directly from the documentation for
-    // `glFrustum`, except that we do the extra step of computing `left`,
-    // `right`, `top`, and `bottom` using `near`, `aspect`, and `far`.
+    // This projection matrix is stolen almost directly from the documentation
+    // for `glFrustum`, (after we do the extra step of computing `left`,
+    // `right`, `top`, and `bottom` using the more user-friendly arguments
+    // `near`, `aspect`, and `far`). Our matrix does differ from OpenGL's in one
+    // important way, though:
+    //
+    // We negate the definitions of `C` and `D` provided in the documentation.
+    // These are the two matrix entries used to compute the z-coordinate of the
+    // output point, so negating them has the effect of swapping the handedness
+    // of the coordinate system. Since OpenGL implicitly uses a left-handed
+    // coordinate system in clip space (where increasing Z values indicate
+    // increasing depth into the screen) this forces a right-handed orientation
+    // on the pre-perspective-transform coordinate system, which we want.
 
     assert(0 < fov && fov < M_PI);
     assert(aspect > 0);
@@ -121,8 +134,8 @@ void mat4_Perspective(mat4 *m, float fov, float aspect, float near, float far)
 
     float A = (right + left)/width;
     float B = (top + bottom)/height;
-    float C = (far + near)/depth;
-    float D = (2*far*near)/depth;
+    float C = -(far + near)/depth;
+    float D = -(2*far*near)/depth;
 
     *m = (mat4) {{
         { (2*near)/width, 0,               A, 0 },
