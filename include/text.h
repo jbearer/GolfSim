@@ -229,6 +229,25 @@ void TextField_PutString(TextField *text_field, const char *string);
 void TextField_PutLine(TextField *text_field, const char *line);
 
 /**
+ * \brief Print formatted text to a text field.
+ *
+ * The format string `fmt` is interpreted as a `printf`-style format string. The
+ * caller must supply variadic arguments of the correct type for each format
+ * specifier in the string. A formatted string is constructed by inserting the
+ * string value of each argument into the specified place in the format string.
+ * This string is then appended to the current output line.
+ *
+ * If a newline is encountered during formatting, the buffer is flushed and the
+ * remainder of the formatted string is inserted starting in the next line, as
+ * if the newline character had been passed to `TextField_PutChar`. If the
+ * length of the formatted string exceeds the remaining space on the current
+ * line before a newline is encountered, output is truncated at that point.
+ *
+ * \todo Newline characters in the middle of the output string are ignored.
+ */
+void TextField_Printf(TextField *text_field, const char *fmt, ...);
+
+/**
  * \brief Flush buffered output.
  *
  * After calling this function, the results of all previous calls to

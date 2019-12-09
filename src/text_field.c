@@ -1,5 +1,7 @@
 #include <assert.h>
+#include <stdarg.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
@@ -311,28 +313,34 @@ void TextField_Render(const TextField *text_field)
     glBindVertexArray(0);
 }
 
+static void TextField_Scroll(TextField *text_field)
+{
+    // Move the cursor to the start of the next row.
+    text_field->cursor_x = 0;
+    text_field->cursor_y++;
+
+    if (text_field->cursor_y >= text_field->height) {
+        // Scroll down one row. For each row up to (not including) the last one,
+        // we copy the contents of the next row into the current row.
+        for (uint8_t row = 0; row + 1 < text_field->height; ++row) {
+            memcpy(TextField_CharAt(text_field, row, 0),
+                   TextField_CharAt(text_field, row+1, 0),
+                   text_field->width);
+        }
+
+        // The bottom row is now empty.
+        memset(TextField_CharAt(text_field, text_field->height - 1, 0),
+               ' ', text_field->width);
+
+        // All the lines have moved up one row, so we move the cursor up.
+        --text_field->cursor_y;
+    }
+}
+
 void TextField_PutChar(TextField *text_field, char c)
 {
     if (c == '\n') {
-        text_field->cursor_x = 0;
-        text_field->cursor_y++;
-        if (text_field->cursor_y >= text_field->height) {
-            // Scroll down one row. For each row up to (not including) the last
-            // one, we copy the contents of the next row into the current row.
-            for (uint8_t row = 0; row + 1 < text_field->height; ++row) {
-                memcpy(TextField_CharAt(text_field, row, 0),
-                       TextField_CharAt(text_field, row+1, 0),
-                       text_field->width);
-            }
-
-            // The bottom row is now empty.
-            memset(TextField_CharAt(text_field, text_field->height - 1, 0),
-                   ' ', text_field->width);
-
-            // All the lines have moved up one row, so we move the cursor up.
-            --text_field->cursor_y;
-        }
-
+        TextField_Scroll(text_field);
         TextField_Flush(text_field);
         return;
     }
@@ -358,6 +366,31 @@ void TextField_PutLine(TextField *text_field, const char *line)
 {
     TextField_PutString(text_field, line);
     TextField_PutChar(text_field, '\n');
+}
+
+void TextField_Printf(TextField *text_field, const char *fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+
+    int length = vsnprintf(
+        TextField_CharAt(
+            text_field, text_field->cursor_y, text_field->cursor_x),
+        text_field->width - text_field->cursor_x,
+        fmt, args
+    );
+
+    char *end = TextField_CharAt(
+        text_field, text_field->cursor_y, text_field->cursor_x + length - 1);
+    if (length >= text_field->width - text_field->cursor_x || *end == '\n') {
+        if (*end == '\n') {
+            *end = ' ';
+        }
+        TextField_Scroll(text_field);
+        TextField_Flush(text_field);
+    } else {
+        text_field->cursor_x += length;
+    }
 }
 
 void TextField_ShowCursor(TextField *text_field)
