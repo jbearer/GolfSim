@@ -76,6 +76,7 @@ struct View {
     Console console;
     float camera_x;
     float camera_y;
+    uint8_t camera_zoom;
 
     mat4 projection;
         // Perspective projection matrix for the scene. Converts camera
@@ -209,7 +210,7 @@ static void View_UpdateMVP(View *view)
         // Rotating the world -45 degrees (-pi/4 radians) about the x axis
         // effectively rotates the camera 45 degrees about the same axis, so it
         // points down towards the terrain but no longer straight down.
-    v = (vec3){0, 0, -30};
+    v = (vec3){0, 0, -view->camera_zoom};
     mat4_Translation(&m, &v);
     mat4_ComposeInPlace(&m, &view->view_projection);
         // Now the z-axis angles isometrically away from the terrain. We move
@@ -291,6 +292,7 @@ View *View_New(GLFWwindow *window, Terrain *terrain)
     view->show_axes = true;
     view->camera_x = 0;
     view->camera_y = 0;
+    view->camera_zoom = 30;
 
 #ifndef NDEBUG
     memset(view->dts, 0, sizeof(view->dts));
@@ -798,13 +800,26 @@ DECLARE_RUNNABLE(camera_move, "move", "<north> <east>")
 {
     if (argc != 2) {
         TextField_PutLine(
-            (TextField *)console, "command 'move camera' takes two arguments");
+            (TextField *)console, "command 'camera zoom' takes two arguments");
         return;
     }
 
     int north = atoi(argv[0]);
     int east  = atoi(argv[1]);
     View_MoveCamera(view, north, east);
+}
+
+DECLARE_RUNNABLE(camera_zoom, "zoom", "adjust the zoom by a delta")
+{
+    if (argc != 1) {
+        TextField_PutLine(
+            (TextField *)console, "command 'camera zoom' takes one argument");
+        return;
+    }
+
+    int delta = atoi(argv[0]);
+    view->camera_zoom -= delta;
+    View_UpdateMVP(view);
 }
 
 DECLARE_RUNNABLE(camera_info, "info",
@@ -817,6 +832,7 @@ DECLARE_RUNNABLE(camera_info, "info",
         "Camera x-coordinate: %d\n", (int)floor(view->camera_x));
     TextField_Printf((TextField *)console,
         "Camera y-coordinate: %d\n", (int)floor(view->camera_y));
+    TextField_PutLine((TextField *)console, "");
 
     // Convert x and y to north and east.
     vec2 en = View_XYtoEN((vec2){view->camera_x, view->camera_y});
@@ -824,10 +840,14 @@ DECLARE_RUNNABLE(camera_info, "info",
         "Camera N-coordinate: %d\n", (int)floor(en.y));
     TextField_Printf((TextField *)console,
         "Camera E-coordinate: %d\n", (int)floor(en.x));
+    TextField_PutLine((TextField *)console, "");
+
+    TextField_Printf((TextField *)console,
+        "Camera zoom: %d\n", (int)view->camera_zoom);
 }
 
 DECLARE_SUB_COMMANDS(camera, "camera", "inspect and manipulate the camera",
-    &camera_move, &camera_info);
+    &camera_move, &camera_zoom, &camera_info);
 
 ////////////////////////////////////////////////////////////////////////////////
 // Terrain
