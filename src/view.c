@@ -750,10 +750,64 @@ DECLARE_SUB_COMMANDS(hide, "hide", "disable rendering of scene entities",
     &hide_axes, &hide_terrain, &hide_terrain_mesh);
 
 ////////////////////////////////////////////////////////////////////////////////
-// Info
+// Window
 //
 
-DECLARE_RUNNABLE(info_camera, "camera",
+DECLARE_RUNNABLE(window_info, "info", "print information about the the window")
+{
+    (void)argc;
+    (void)argv;
+
+    // Print window size
+    int width, height;
+    glfwGetWindowSize(view->window, &width, &height);
+    TextField_Printf((TextField *)console, "Window width:  %d\n", width);
+    TextField_Printf((TextField *)console, "Window height: %d\n", height);
+
+    // Print cursor position
+    double cursor_x, cursor_y;
+    glfwGetCursorPos(view->window, &cursor_x, &cursor_y);
+    TextField_Printf((TextField *)console,
+        "Cursor x: %d\n", (int)floor(cursor_x));
+    TextField_Printf((TextField *)console,
+        "Cursor y: %d\n", (int)floor(cursor_y));
+
+#ifndef NDEBUG
+    // Print a running average of the frame rate
+    float   avg_ms = 0;
+    uint8_t n      = sizeof(view->dts)/sizeof(view->dts[0]);
+
+    for (uint8_t i = 0; i < n; ++i) {
+        avg_ms += view->dts[i];
+    }
+    avg_ms = avg_ms / n;
+
+    float rate = 1000.0 / avg_ms;
+    TextField_Printf((TextField *)console, "Frame rate: %.1f\n", rate);
+#endif
+}
+
+DECLARE_SUB_COMMANDS(window, "window", "print information about the window",
+    &window_info);
+
+////////////////////////////////////////////////////////////////////////////////
+// Camera
+//
+
+DECLARE_RUNNABLE(camera_move, "move", "<north> <east>")
+{
+    if (argc != 2) {
+        TextField_PutLine(
+            (TextField *)console, "command 'move camera' takes two arguments");
+        return;
+    }
+
+    int north = atoi(argv[0]);
+    int east  = atoi(argv[1]);
+    View_MoveCamera(view, north, east);
+}
+
+DECLARE_RUNNABLE(camera_info, "info",
     "print information about the position of the camera")
 {
     (void)argc;
@@ -772,77 +826,15 @@ DECLARE_RUNNABLE(info_camera, "camera",
         "Camera E-coordinate: %d\n", (int)floor(en.x));
 }
 
-DECLARE_RUNNABLE(info_window, "window",
-    "print information about the the window")
-{
-    (void)argc;
-    (void)argv;
-
-    int width, height;
-    glfwGetWindowSize(view->window, &width, &height);
-    TextField_Printf((TextField *)console, "Window width:  %d\n", width);
-    TextField_Printf((TextField *)console, "Window height: %d\n", height);
-
-    double cursor_x, cursor_y;
-    glfwGetCursorPos(view->window, &cursor_x, &cursor_y);
-    TextField_Printf((TextField *)console,
-        "Cursor x: %d\n", (int)floor(cursor_x));
-    TextField_Printf((TextField *)console,
-        "Cursor y: %d\n", (int)floor(cursor_y));
-}
-
-#ifndef NDEBUG
-DECLARE_RUNNABLE(info_frame_rate, "frame-rate",
-    "print an estimate of the current frame rate")
-{
-    (void)argc;
-    (void)argv;
-
-    float   avg_ms = 0;
-    uint8_t n      = sizeof(view->dts)/sizeof(view->dts[0]);
-
-    for (uint8_t i = 0; i < n; ++i) {
-        avg_ms += view->dts[i];
-    }
-    avg_ms = avg_ms / n;
-
-    float rate = 1000.0 / avg_ms;
-    TextField_Printf((TextField *)console, "%.1f\n", rate);
-}
-#endif
-
-#ifdef NDEBUG
-DECLARE_SUB_COMMANDS(info, "info", "print information about scene entities",
-    &info_camera, &info_window);
-#else
-DECLARE_SUB_COMMANDS(info, "info", "print information about scene entities",
-    &info_camera, &info_window, &info_frame_rate);
-#endif
-
-////////////////////////////////////////////////////////////////////////////////
-// Move
-//
-
-DECLARE_RUNNABLE(move_camera, "camera", "<north> <east>")
-{
-    if (argc != 2) {
-        TextField_PutLine(
-            (TextField *)console, "command 'move camera' takes two arguments");
-        return;
-    }
-
-    int north = atoi(argv[0]);
-    int east  = atoi(argv[1]);
-    View_MoveCamera(view, north, east);
-}
-
-DECLARE_SUB_COMMANDS(move, "move", "translate scene entities", &move_camera);
+DECLARE_SUB_COMMANDS(camera, "camera", "inspect and manipulate the camera",
+    &camera_move, &camera_info);
 
 ////////////////////////////////////////////////////////////////////////////////
 // Terrain
 //
 
-DECLARE_RUNNABLE(terrain_set, "set", "set the material of face (<row>, <col>) to <material>")
+DECLARE_RUNNABLE(terrain_set, "set",
+    "set the material of face (<row>, <col>) to <material>")
 {
     if (argc != 3) {
         TextField_PutLine((TextField *)console,
@@ -882,6 +874,6 @@ DECLARE_RUNNABLE(terrain_set, "set", "set the material of face (<row>, <col>) to
 DECLARE_SUB_COMMANDS(terrain, "terrain", "inspect and manipulate the terrain",
     &terrain_set);
 
-DECLARE_PROGRAM(&show, &hide, &info, &move, &terrain);
+DECLARE_PROGRAM(&show, &hide, &window, &camera, &terrain);
 
 #undef PROGRAM_INFO
