@@ -118,10 +118,10 @@ static inline uint32_t Terrain_NumVertices(const Terrain *terrain)
  * \brief Get a reference to the face at a given position.
  *
  * \pre
- * `row < Terrain_FaceWidth(terrain)`
+ * `row < Terrain_FaceHeight(terrain)`
  *
  * \pre
- * `col < Terrain_FaceHeight(terrain)`
+ * `col < Terrain_FaceWidth(terrain)`
  */
 static inline Face *Terrain_GetFace(
     Terrain *terrain, uint16_t row, uint16_t col)
@@ -135,10 +135,10 @@ static inline Face *Terrain_GetFace(
  * \brief Get a reference to the face at a given position.
  *
  * \pre
- * `row < Terrain_FaceWidth(terrain)`
+ * `row < Terrain_FaceHeight(terrain)`
  *
  * \pre
- * `col < Terrain_FaceHeight(terrain)`
+ * `col < Terrain_FaceWidth(terrain)`
  */
 static inline const Face *Terrain_GetConstFace(
     const Terrain *terrain, uint16_t row, uint16_t col)
@@ -155,5 +155,54 @@ static inline const Face *Terrain_GetConstFace(
  * \param height The height of the terrain in faces.
  */
 void Terrain_Init(Terrain *terrain, uint16_t width, uint16_t height);
+
+/**
+ * \brief Raise or lower the z-coordinate of a face.
+ *
+ * \param row   The row of the face on which to operate.
+ * \param col   The column of the face on which to operate.
+ * \param delta The change to apply to the z-coordinate of each vertex in the
+ *              specified face. A positive delta raises the face; a negative
+ *              delta lowers it.
+ *
+ * Each vertex in the face is raised or lowered individually as if by
+ * `Terrain_RaiseVertex`. This means that the lower-bound behavior applied by
+ * `Terrain_RaiseVertex` is applied to each vertex independently: if
+ * `vertex + delta < 0` for any vertex, the height of that vertex will be set to
+ * 0. If `vertex + delta >= 0` for any vertex, that vertex will be raised or
+ * lowered the full amount, _even if_ some other vertex was truncated at 0.
+ *
+ * \pre
+ * `row < Terrain_FaceHeight(terrain)`
+ *
+ * \pre
+ * `col < Terrain_FaceWidth(terrain)`
+ */
+void Terrain_RaiseFace(
+    Terrain *terrain, uint16_t row, uint16_t col, int16_t delta);
+
+/**
+ * \brief Raise or lower the z-coordinate of a vertex.
+ *
+ * \param row   The row of the vertex on which to operate.
+ * \param col   The column of the vertex on which to operate.
+ * \param delta The change to apply to the z-coordinate of the vertex. A
+ *              positive delta raises the vertex; a negative delta lowers it.
+ *
+ * If `vertex + delta >= 0`, the new height of the vertex will be
+ * `vertex + delta`. Otherwise, if `vertex + delta < 0`, the new height of the
+ * vertex will be 0.
+ *
+ * This change affects all vertices that share this row and column. There may be
+ * up to four such vertices: one for each face which has a corner here.
+ *
+ * \pre
+ * `row < Terrain_VertexHeight(terrain)`
+ *
+ * \pre
+ * `col < Terrain_VertexWidth(terrain)`
+ */
+void Terrain_RaiseVertex(
+    Terrain *terrain, uint16_t row, uint16_t col, int16_t delta);
 
 #endif

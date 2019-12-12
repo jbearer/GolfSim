@@ -240,6 +240,70 @@ static void View_UpdateMVP(View *view)
     glUseProgram(0);
 }
 
+static void View_UpdateFaceHeights(View *view)
+{
+    vec3 *positions = Malloc(sizeof(vec3)*view->num_vertices);
+    uint32_t i = 0; // Index of current vertex in `positions`.
+
+    // Initialize x-y vertex positions, 2 triangles for each face.
+    for (uint16_t row = 0; row < Terrain_FaceHeight(view->terrain); ++row) {
+        for (uint16_t col = 0; col < Terrain_FaceWidth(view->terrain); ++col) {
+            assert(i < view->num_vertices);
+
+            const Face *face = Terrain_GetConstFace(view->terrain, row, col);
+            const uint16_t *z = face->vertices;
+
+
+            // We will draw a square face using two triangles, like this:
+            //
+            //        col   col+1
+            //         |      |
+            //   row --+------+--
+            //         | A  / |
+            //         |   /  |
+            //         |  /   |
+            //         | /  B |
+            // row+1 --+------+--
+            //         |      |
+            //
+
+            // Triangle A: (col, row), (col+1, row), (col, row+1)
+            positions[i++] = (vec3){ col,   row,   z[0] };
+            positions[i++] = (vec3){ col+1, row,   z[1] };
+            positions[i++] = (vec3){ col,   row+1, z[3] };
+
+            // Triangle B: (col+1, row+1), (col+1, row), (col, row+1)
+            positions[i++] = (vec3){ col+1, row+1, z[2] };
+            positions[i++] = (vec3){ col+1, row,   z[1] };
+            positions[i++] = (vec3){ col,   row+1, z[3] };
+        }
+    }
+
+    // Copy data into OpenGL's vertex buffer.
+    glBindVertexArray(view->gl_terrain_vao);
+    {
+        // Initialize vertex buffer
+        glGenBuffers(1, &view->gl_terrain_positions);
+        glBindBuffer(GL_ARRAY_BUFFER, view->gl_terrain_positions);
+        {
+            glBufferData(
+                GL_ARRAY_BUFFER,
+                sizeof(vec3)*view->num_vertices,
+                positions,
+                GL_DYNAMIC_DRAW
+            );
+            glVertexAttribPointer(
+                VERTEX_ATTRIB_POSITION, 3, GL_FLOAT, GL_FALSE, 0, 0);
+            glEnableVertexAttribArray(VERTEX_ATTRIB_POSITION);
+        }
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+    glBindVertexArray(0);
+    free(positions);
+        // GL has copied the vertex data into GPU memory, so we can free our
+        // buffer.
+}
+
 static void View_UpdateFaceColors(View *view)
 {
     vec4 *colors = Malloc(sizeof(vec4)*view->num_vertices);
@@ -306,69 +370,8 @@ View *View_New(GLFWwindow *window, Terrain *terrain)
     // Create vertex data
     view->num_vertices = 6*Terrain_NumFaces(terrain);
         // Each square face consists of 2 triangles, so 6 vertices.
-    vec3 *positions = Malloc(sizeof(vec3)*view->num_vertices);
-
-    uint32_t i = 0; // Index of current vertex in `positions`.
-
-    // Initialize x-y vertex positions, 2 triangles for each face. Unlike the z
-    // coordinates, these will never change, so we only have to do this once.
-    for (uint16_t row = 0; row < Terrain_FaceHeight(terrain); ++row) {
-        for (uint16_t col = 0; col < Terrain_FaceWidth(terrain); ++col) {
-            assert(i < view->num_vertices);
-
-            const Face *face = Terrain_GetConstFace(terrain, row, col);
-            const uint16_t *z = face->vertices;
-
-
-            // We will draw a square face using two triangles, like this:
-            //
-            //        col   col+1
-            //         |      |
-            //   row --+------+--
-            //         | A  / |
-            //         |   /  |
-            //         |  /   |
-            //         | /  B |
-            // row+1 --+------+--
-            //         |      |
-            //
-
-            // Triangle A: (col, row), (col+1, row), (col, row+1)
-            positions[i++] = (vec3){ col,   row,   z[0] };
-            positions[i++] = (vec3){ col+1, row,   z[1] };
-            positions[i++] = (vec3){ col,   row+1, z[3] };
-
-            // Triangle B: (col+1, row+1), (col+1, row), (col, row+1)
-            positions[i++] = (vec3){ col+1, row+1, z[2] };
-            positions[i++] = (vec3){ col+1, row,   z[1] };
-            positions[i++] = (vec3){ col,   row+1, z[3] };
-        }
-    }
-
-    // Initialize vertex array
     glGenVertexArrays(1, &view->gl_terrain_vao);
-    glBindVertexArray(view->gl_terrain_vao);
-    {
-        // Initialize vertex buffer
-        glGenBuffers(1, &view->gl_terrain_positions);
-        glBindBuffer(GL_ARRAY_BUFFER, view->gl_terrain_positions);
-        {
-            glBufferData(
-                GL_ARRAY_BUFFER,
-                sizeof(vec3)*view->num_vertices,
-                positions,
-                GL_DYNAMIC_DRAW
-            );
-            glVertexAttribPointer(
-                VERTEX_ATTRIB_POSITION, 3, GL_FLOAT, GL_FALSE, 0, 0);
-            glEnableVertexAttribArray(VERTEX_ATTRIB_POSITION);
-        }
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-    }
-    glBindVertexArray(0);
-    free(positions);
-        // GL has copied the vertex data into GPU memory, so we can free our
-        // buffer.
+    View_UpdateFaceHeights(view);
 
     // Initialize color data
     glGenBuffers(1, &view->gl_terrain_colors);
@@ -891,8 +894,58 @@ DECLARE_RUNNABLE(terrain_set, "set",
     View_UpdateFaceColors(view);
 }
 
+DECLARE_RUNNABLE(terrain_raise_face, "raise-face",
+    "raise (or lower) the face at (<row>, <col>) by <delta>")
+{
+    if (argc != 3) {
+        TextField_PutLine((TextField *)console,
+            "command 'terrain raise' takes three arguments");
+        return;
+    }
+
+    int row = atoi(argv[0]);
+    int col = atoi(argv[1]);
+    if (row < 0 || row >= Terrain_FaceHeight(view->terrain)) {
+        TextField_PutLine((TextField *)console, "row out of range");
+        return;
+    }
+    if (col < 0 || col >= Terrain_FaceHeight(view->terrain)) {
+        TextField_PutLine((TextField *)console, "col out of range");
+        return;
+    }
+
+    int delta = atoi(argv[2]);
+    Terrain_RaiseFace(view->terrain, row, col, delta);
+    View_UpdateFaceHeights(view);
+}
+
+DECLARE_RUNNABLE(terrain_raise_vertex, "raise-vertex",
+    "raise (or lower) the vertex at (<row>, <col>) by <delta>")
+{
+    if (argc != 3) {
+        TextField_PutLine((TextField *)console,
+            "command 'terrain raise' takes three arguments");
+        return;
+    }
+
+    int row = atoi(argv[0]);
+    int col = atoi(argv[1]);
+    if (row < 0 || row >= Terrain_VertexHeight(view->terrain)) {
+        TextField_PutLine((TextField *)console, "row out of range");
+        return;
+    }
+    if (col < 0 || col >= Terrain_VertexHeight(view->terrain)) {
+        TextField_PutLine((TextField *)console, "col out of range");
+        return;
+    }
+
+    int delta = atoi(argv[2]);
+    Terrain_RaiseVertex(view->terrain, row, col, delta);
+    View_UpdateFaceHeights(view);
+}
+
 DECLARE_SUB_COMMANDS(terrain, "terrain", "inspect and manipulate the terrain",
-    &terrain_set);
+    &terrain_set, &terrain_raise_face, &terrain_raise_vertex);
 
 DECLARE_PROGRAM(&show, &hide, &window, &camera, &terrain);
 
