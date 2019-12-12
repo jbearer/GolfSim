@@ -11,6 +11,10 @@
 #include "text.h"
 #include "view.h"
 
+#define CAMERA_PAN_YDS_MS 0.02
+    // How fast the camera should pan when the user's mouse is positioned on an
+    // edge of the window, in yds/ms.
+
 typedef struct {
     GLuint vao;
     GLuint positions;
@@ -69,8 +73,8 @@ struct View {
     const Terrain *terrain;
     uint32_t num_vertices;
     Console console;
-    int32_t camera_x;
-    int32_t camera_y;
+    float camera_x;
+    float camera_y;
 
     mat4 projection;
         // Perspective projection matrix for the scene. Converts camera
@@ -385,60 +389,16 @@ View *View_New(GLFWwindow *window, const Terrain *terrain)
     return view;
 }
 
-void View_Render(View *view, uint32_t dt)
+// Convert a vector in camera cooridnates (EN) to one in world coordinates (XY).
+static inline vec2 View_ENtoXY(vec2 en)
 {
-#ifndef NDEBUG
-    view->dts[view->dts_next++] = dt;
-    if (view->dts_next >= sizeof(view->dts)/sizeof(view->dts[0])) {
-        view->dts_next = 0;
-    }
-#endif
-
-    Console_Render(&view->console);
-
-    if (view->show_terrain) {
-        // Draw terrain
-        glUseProgram(view->gl_terrain_shaders);
-        glUniform1ui(view->gl_terrain_shader_mesh, 0);
-
-        glBindVertexArray(view->gl_terrain_vao);
-        {
-            glDrawArrays(GL_TRIANGLES, 0, view->num_vertices);
-        }
-        glBindVertexArray(0);
-    }
-
-    if (view->show_terrain_mesh) {
-        // Draw terrain mesh
-        glUseProgram(view->gl_terrain_shaders);
-        glUniform1ui(view->gl_terrain_shader_mesh, 1);
-        glBindVertexArray(view->gl_terrain_vao);
-        {
-            glDrawArrays(GL_LINES, 0, view->num_vertices);
-        }
-        glBindVertexArray(0);
-    }
-
-    if (view->show_axes) {
-        // Draw axes
-        glUseProgram(view->gl_axis_shaders);
-        Axis_Render(&view->x_axis);
-        Axis_Render(&view->y_axis);
-        Axis_Render(&view->z_axis);
-    }
-}
-
-// Move the camera north and east by the given deltas. `north` and `east` may
-// be negative, to allow moving south and west, respectively.
-static void View_MoveCamera(View *view, int32_t north, int32_t east)
-{
-    // We have deltas in camera coordintaes (the north and east directions) but
-    // we need to change the XY coordinates of the camera. To convert, we'll
-    // first make the observation that we don't need to do anything special to
-    // handle movement along the north and east axes simultaneously, because we
-    // can just move north and then east in two steps -- walking 4 steps north
-    // and then 3 steps east is the same as walking 5 steps in a north-
-    // northeasterly direction:
+    // We want to convert deltas in camera coordinates (the north and east
+    // directions) to deltas in the x and y directions. To convert, we'll first
+    // make the observation that we don't need to do anything special to handle
+    // movement along the north and east axes simultaneously, because we can
+    // just move north and then east in two steps -- walking 4 steps north and
+    // then 3 steps east is the same as walking 5 steps in a north-northeasterly
+    // direction:
     //
     //                                  3
     //                                .----B
@@ -506,12 +466,162 @@ static void View_MoveCamera(View *view, int32_t north, int32_t east)
     // move, we get
     //                   Δx = Δxₙ + Δxₑ = 1/√2 (ΔN + ΔE)
     //                   Δy = Δyₙ + Δyₑ = 1/√2 (ΔN - ΔE)
-    view->camera_x += M_SQRT1_2 * (north + east);
-    view->camera_y += M_SQRT1_2 * (north - east);
+    return (vec2){M_SQRT1_2*(en.y + en.x), M_SQRT1_2*(en.y - en.x)};
+}
+
+// Convert a vector in world coordinates (XY) to one in camera coordinates (EN).
+static inline vec2 View_XYtoEN(vec2 xy)
+{
+    // In the comments in View_ENtoXY, we derive
+    //                        x = 1/√2 (N + E)
+    //                        y = 1/√2 (N - E)
+    // Adding these two equations gives
+    //                    x + y = N√2
+    // or
+    //                        N = 1/√2 (x + y)
+    // and subtracting them gives
+    //                    x - y = E√2
+    // or
+    //                        E = 1/√2 (x - y)
+    return (vec2){M_SQRT1_2*(xy.x - xy.y), M_SQRT1_2*(xy.x + xy.y)};
+}
+
+// Move the camera north and east by the given deltas. `north` and `east` may
+// be negative, to allow moving south and west, respectively.
+static void View_MoveCamera(View *view, float north, float east)
+{
+    // We are given deltas in the north and east directions, but we need to
+    // modify the camera's x and y coordinates, so we first convert to XY
+    // deltas.
+    vec2 xy = View_ENtoXY((vec2){east,north});
+
+    // Now we can directly modify the camera cooridnates.
+    view->camera_x += xy.x;
+    view->camera_y += xy.y;
 
     // We've changed the camera position, which is one of the inputs to the MVP
     // matrix, so we have to update the matrix.
     View_UpdateMVP(view);
+}
+
+static void View_Animate(View *view, uint32_t dt)
+{
+#ifndef NDEBUG
+    ////////////////////////////////////////////////////////////////////////////
+    // Update the frame-rate buffer so we can compute a running average.
+    //
+    view->dts[view->dts_next++] = dt;
+    if (view->dts_next >= sizeof(view->dts)/sizeof(view->dts[0])) {
+        view->dts_next = 0;
+    }
+#endif
+
+    ////////////////////////////////////////////////////////////////////////////
+    // Animate camera movement based on cursor position.
+    //
+
+    // Get the position of the cursor.
+    double cursor_x, cursor_y;
+    glfwGetCursorPos(view->window, &cursor_x, &cursor_y);
+    int x = floor(cursor_x);
+    int y = floor(cursor_y);
+
+    // Get the size of the window to compare with the cursor.
+    int width, height;
+    glfwGetWindowSize(view->window, &width, &height);
+
+    // Compute how far we will move the camera in each direction.
+    float delta = CAMERA_PAN_YDS_MS*dt;
+
+    // Set up cardinal direction deltas based on cursor position.
+    float north = 0;
+    float east = 0;
+    if (x <= 0) {
+        // Left edge of the window.
+        east = -delta;
+    } else if (x >= width - 1) {
+        // Right edge.
+        east = delta;
+    }
+
+    if (y <= 0) {
+        // Top edge (glfwGetCursorPos gives you the position relative to the top
+        // left, so y == 0 is the top edge and y == height is the bottom edge).
+        north = delta;
+    } else if (y >= height - 1) {
+        // Bottom edge.
+        north = -delta;
+    }
+
+    // Compute the coordinates of the camera so we can check if this movement is
+    // taking us outside the viewable terrain area so we can clip it.
+    vec2 camera = View_XYtoEN((vec2){view->camera_x, view->camera_y});
+
+    // Clip the northerly delta so that the camera doesn't slide so far north or
+    // south that we lose sight of the terrain and get lost.
+    vec2 north_corner = View_XYtoEN((vec2){
+        Terrain_FaceWidth(view->terrain),
+        Terrain_FaceHeight(view->terrain)
+    });
+    if (camera.y + north > north_corner.y) {
+        // The north delta would take us north of the northernmost corner of the
+        // terrain, so set it to take us exactly there instead.
+        north = north_corner.y - camera.y;
+    } else if (camera.y + north < 0) {
+        // The north delta would take us south of the southernmost corner of the
+        // terrain, so set it to take us exactly there instead.
+        north = -camera.y;
+    }
+
+    // Clip the easterly delta in the same way.
+    vec2 east_corner = View_XYtoEN((vec2){Terrain_FaceWidth(view->terrain), 0});
+    vec2 west_corner = View_XYtoEN(
+        (vec2){0, Terrain_FaceHeight(view->terrain)});
+    if (camera.x + east > east_corner.x) {
+        east = east_corner.x - camera.x;
+    } else if (camera.x + east < west_corner.x) {
+        east = west_corner.x - camera.x;
+    }
+
+    View_MoveCamera(view, north, east);
+}
+
+void View_Render(View *view, uint32_t dt)
+{
+    View_Animate(view, dt);
+
+    Console_Render(&view->console);
+
+    if (view->show_terrain) {
+        // Draw terrain
+        glUseProgram(view->gl_terrain_shaders);
+        glUniform1ui(view->gl_terrain_shader_mesh, 0);
+
+        glBindVertexArray(view->gl_terrain_vao);
+        {
+            glDrawArrays(GL_TRIANGLES, 0, view->num_vertices);
+        }
+        glBindVertexArray(0);
+    }
+
+    if (view->show_terrain_mesh) {
+        // Draw terrain mesh
+        glUseProgram(view->gl_terrain_shaders);
+        glUniform1ui(view->gl_terrain_shader_mesh, 1);
+        glBindVertexArray(view->gl_terrain_vao);
+        {
+            glDrawArrays(GL_LINES, 0, view->num_vertices);
+        }
+        glBindVertexArray(0);
+    }
+
+    if (view->show_axes) {
+        // Draw axes
+        glUseProgram(view->gl_axis_shaders);
+        Axis_Render(&view->x_axis);
+        Axis_Render(&view->y_axis);
+        Axis_Render(&view->z_axis);
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -604,9 +714,35 @@ DECLARE_RUNNABLE(info_camera, "camera",
     (void)argv;
 
     TextField_Printf((TextField *)console,
-        "Camera x-coordinate: %d\n", (int)view->camera_x);
+        "Camera x-coordinate: %d\n", (int)floor(view->camera_x));
     TextField_Printf((TextField *)console,
-        "Camera y-coordinate: %d\n", (int)view->camera_y);
+        "Camera y-coordinate: %d\n", (int)floor(view->camera_y));
+
+    // Convert x and y to north and east.
+    vec2 en = View_XYtoEN((vec2){view->camera_x, view->camera_y});
+    TextField_Printf((TextField *)console,
+        "Camera N-coordinate: %d\n", (int)floor(en.y));
+    TextField_Printf((TextField *)console,
+        "Camera E-coordinate: %d\n", (int)floor(en.x));
+}
+
+DECLARE_RUNNABLE(info_window, "window",
+    "print information about the the window")
+{
+    (void)argc;
+    (void)argv;
+
+    int width, height;
+    glfwGetWindowSize(view->window, &width, &height);
+    TextField_Printf((TextField *)console, "Window width:  %d\n", width);
+    TextField_Printf((TextField *)console, "Window height: %d\n", height);
+
+    double cursor_x, cursor_y;
+    glfwGetCursorPos(view->window, &cursor_x, &cursor_y);
+    TextField_Printf((TextField *)console,
+        "Cursor x: %d\n", (int)floor(cursor_x));
+    TextField_Printf((TextField *)console,
+        "Cursor y: %d\n", (int)floor(cursor_y));
 }
 
 #ifndef NDEBUG
@@ -631,10 +767,10 @@ DECLARE_RUNNABLE(info_frame_rate, "frame-rate",
 
 #ifdef NDEBUG
 DECLARE_SUB_COMMANDS(info, "info", "print information about scene entities",
-    &info_camera);
+    &info_camera, &info_window);
 #else
 DECLARE_SUB_COMMANDS(info, "info", "print information about scene entities",
-    &info_camera, &info_frame_rate);
+    &info_camera, &info_window, &info_frame_rate);
 #endif
 
 ////////////////////////////////////////////////////////////////////////////////

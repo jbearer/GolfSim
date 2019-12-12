@@ -153,19 +153,22 @@ int main(int argc, char *const *argv)
     while (!glfwWindowShouldClose(window)) {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        assert(curr_time >= last_time);
-        View_Render(view, curr_time - last_time);
-        last_time = curr_time;
         curr_time = Clock_GetTimeMS();
+        assert(curr_time >= last_time);
 
-        glfwSwapBuffers(window);
-        glfwPollEvents();
-
-        if (Clock_GetTimeMS() - last_time < 10) {
+        if(curr_time - last_time < 10) {
             // We're running more than 100 frames per second, which is
             // pointless. Throttle back a little bit.
             Clock_SleepMS(10);
+            curr_time = Clock_GetTimeMS();
         }
+
+
+        View_Render(view, curr_time - last_time);
+        last_time = curr_time;
+
+        glfwSwapBuffers(window);
+        glfwPollEvents();
     }
 
     glfwTerminate();
