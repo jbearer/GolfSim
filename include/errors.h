@@ -18,13 +18,15 @@ typedef enum {
 } LogLevel;
 
 typedef enum {
-    FATAL
+    WARNING,
+    FATAL,
 } ErrorLevel;
 
 typedef enum {
     ERR_OUT_OF_MEMORY,
     ERR_IO,
     ERR_INVALID_SHADER,
+    ERR_TIME,
 } Error;
 
 /**

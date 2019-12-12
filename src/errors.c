@@ -20,6 +20,9 @@ void Error_Raise(ErrorLevel level, Error error, void *arg)
         case ERR_INVALID_SHADER:
             fprintf(stderr, "Invalid shader: %s\n", (char *)arg);
             break;
+        case ERR_TIME:
+            fprintf(stderr, "Could not get time: %s\n", (char *)arg);
+            break;
         default:
             fprintf(stderr, "Unknown error %d\n", (int)error);
             break;

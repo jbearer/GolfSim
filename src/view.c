@@ -101,6 +101,14 @@ struct View {
     Axis z_axis;
     GLuint gl_axis_shaders;
     GLuint gl_axis_shader_mvp;
+
+#ifndef NDEBUG
+    uint32_t dts[10];
+        // Milliseconds required to render the last 10 frames. This array
+        // represents a circular buffer.
+    uint8_t dts_next;
+        // Offset into `dts` of the next sample to overwrite.
+#endif
 };
 
 static Command view_program;
@@ -237,6 +245,11 @@ View *View_New(GLFWwindow *window, const Terrain *terrain)
     view->camera_x = 0;
     view->camera_y = 0;
 
+#ifndef NDEBUG
+    memset(view->dts, 0, sizeof(view->dts));
+    view->dts_next = 0;
+#endif
+
     ////////////////////////////////////////////////////////////////////////////
     // Initialize terrain data
     //
@@ -372,8 +385,15 @@ View *View_New(GLFWwindow *window, const Terrain *terrain)
     return view;
 }
 
-void View_Render(View *view)
+void View_Render(View *view, uint32_t dt)
 {
+#ifndef NDEBUG
+    view->dts[view->dts_next++] = dt;
+    if (view->dts_next >= sizeof(view->dts)/sizeof(view->dts[0])) {
+        view->dts_next = 0;
+    }
+#endif
+
     Console_Render(&view->console);
 
     if (view->show_terrain) {
@@ -589,8 +609,33 @@ DECLARE_RUNNABLE(info_camera, "camera",
         "Camera y-coordinate: %d\n", (int)view->camera_y);
 }
 
+#ifndef NDEBUG
+DECLARE_RUNNABLE(info_frame_rate, "frame-rate",
+    "print an estimate of the current frame rate")
+{
+    (void)argc;
+    (void)argv;
+
+    float   avg_ms = 0;
+    uint8_t n      = sizeof(view->dts)/sizeof(view->dts[0]);
+
+    for (uint8_t i = 0; i < n; ++i) {
+        avg_ms += view->dts[i];
+    }
+    avg_ms = avg_ms / n;
+
+    float rate = 1000.0 / avg_ms;
+    TextField_Printf((TextField *)console, "%.1f\n", rate);
+}
+#endif
+
+#ifdef NDEBUG
 DECLARE_SUB_COMMANDS(info, "info", "print information about scene entities",
     &info_camera);
+#else
+DECLARE_SUB_COMMANDS(info, "info", "print information about scene entities",
+    &info_camera, &info_frame_rate);
+#endif
 
 ////////////////////////////////////////////////////////////////////////////////
 // Move

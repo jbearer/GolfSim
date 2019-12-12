@@ -30,5 +30,16 @@ if (CMAKE_BUILD_TYPE EQUAL Debug)
 endif()
 
 set(CMAKE_C_FLAGS "-Wall -Wextra -Werror -ansi -pedantic -std=c99")
+
+if (CMAKE_SYSTEM_NAME STREQUAL Linux)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DGOLF_OS_LINUX")
+elseif(CMAKE_SYSTEM_NAME STREQUAL Darwin)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DGOLF_OS_MAC")
+elseif(CMAKE_SYSTEM_NAME STREQUAL Windows)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DGOLF_OS_WINDOWS")
+else()
+    message(WARNING "Unrecognized operating system ${CMAKE_SYSTEM_NAME}")
+endif()
+
 add_subdirectory(src)
 add_subdirectory(app)

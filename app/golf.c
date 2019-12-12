@@ -8,6 +8,7 @@
 #include <GL/glew.h> // Important to include glew before other GL stuff
 #include <GLFW/glfw3.h>
 
+#include "clock.h"
 #include "errors.h"
 #include "terrain.h"
 #include "view.h"
@@ -145,14 +146,26 @@ int main(int argc, char *const *argv)
         // with intensity given by the source alpha channel, and take the
         // destination color with the remaining intensity (1 - source alpha).
 
+    uint64_t curr_time = Clock_GetTimeMS();
+    uint64_t last_time = curr_time;
+
     // Main loop
     while (!glfwWindowShouldClose(window)) {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        View_Render(view);
+        assert(curr_time >= last_time);
+        View_Render(view, curr_time - last_time);
+        last_time = curr_time;
+        curr_time = Clock_GetTimeMS();
 
         glfwSwapBuffers(window);
         glfwPollEvents();
+
+        if (Clock_GetTimeMS() - last_time < 10) {
+            // We're running more than 100 frames per second, which is
+            // pointless. Throttle back a little bit.
+            Clock_SleepMS(10);
+        }
     }
 
     glfwTerminate();
