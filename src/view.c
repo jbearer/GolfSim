@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <stdlib.h>
+#include <strings.h>
 
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
@@ -70,7 +71,7 @@ static void Axis_Render(const Axis *axis)
 
 struct View {
     GLFWwindow *window;
-    const Terrain *terrain;
+    Terrain *terrain;
     uint32_t num_vertices;
     Console console;
     float camera_x;
@@ -94,6 +95,7 @@ struct View {
     bool show_terrain_mesh;
     GLuint gl_terrain_vao;          // Vertex array object
     GLuint gl_terrain_positions;    // Position buffer
+    GLuint gl_terrain_colors;       // Color buffer
     GLuint gl_terrain_shaders;      // Shader program
     GLuint gl_terrain_shader_mvp;   // MVP matrix
     GLuint gl_terrain_shader_mesh;  // Mesh flag
@@ -237,7 +239,48 @@ static void View_UpdateMVP(View *view)
     glUseProgram(0);
 }
 
-View *View_New(GLFWwindow *window, const Terrain *terrain)
+static void View_UpdateFaceColors(View *view)
+{
+    vec4 *colors = Malloc(sizeof(vec4)*view->num_vertices);
+    uint32_t i = 0; // Index of current vertex in `colors`.
+
+    for (uint16_t row = 0; row < Terrain_FaceWidth(view->terrain); ++row) {
+        for (uint16_t col = 0; col < Terrain_FaceHeight(view->terrain); ++col) {
+            assert(i < view->num_vertices);
+
+            const Face *face = Terrain_GetConstFace(view->terrain, row, col);
+
+            // Each face is composed of two triangles, which means it has 6
+            // vertices. So the next 6 points in the vertex buffer correspond to
+            // this face. We will make them all the color of the face.
+            for (uint8_t j = 0; j < 6; ++j) {
+                colors[i++] = face->material->color;
+            }
+        }
+    }
+
+    // Copy data into OpenGL's vertex buffer.
+    glBindVertexArray(view->gl_terrain_vao);
+    {
+        glBindBuffer(GL_ARRAY_BUFFER, view->gl_terrain_colors);
+        {
+            glBufferData(
+                GL_ARRAY_BUFFER,
+                sizeof(vec4)*view->num_vertices,
+                colors,
+                GL_DYNAMIC_DRAW
+            );
+            glVertexAttribPointer(
+                VERTEX_ATTRIB_COLOR, 4, GL_FLOAT, GL_FALSE, 0, 0);
+            glEnableVertexAttribArray(VERTEX_ATTRIB_COLOR);
+        }
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+    glBindVertexArray(0);
+    free(colors);
+}
+
+View *View_New(GLFWwindow *window, Terrain *terrain)
 {
     View *view = Malloc(sizeof(View));
 
@@ -267,8 +310,8 @@ View *View_New(GLFWwindow *window, const Terrain *terrain)
 
     // Initialize x-y vertex positions, 2 triangles for each face. Unlike the z
     // coordinates, these will never change, so we only have to do this once.
-    for (uint16_t row = 0; row < Terrain_FaceWidth(terrain); ++row) {
-        for (uint16_t col = 0; col < Terrain_FaceHeight(terrain); ++col) {
+    for (uint16_t row = 0; row < Terrain_FaceHeight(terrain); ++row) {
+        for (uint16_t col = 0; col < Terrain_FaceWidth(terrain); ++col) {
             assert(i < view->num_vertices);
 
             const Face *face = Terrain_GetConstFace(terrain, row, col);
@@ -288,15 +331,15 @@ View *View_New(GLFWwindow *window, const Terrain *terrain)
             //         |      |
             //
 
-            // Triangle A: (row, col), (row, col+1), (row+1, col)
-            positions[i++] = (vec3){ row,   col,   z[0] };
-            positions[i++] = (vec3){ row,   col+1, z[1] };
-            positions[i++] = (vec3){ row+1, col,   z[3] };
+            // Triangle A: (col, row), (col+1, row), (col, row+1)
+            positions[i++] = (vec3){ col,   row,   z[0] };
+            positions[i++] = (vec3){ col+1, row,   z[1] };
+            positions[i++] = (vec3){ col,   row+1, z[3] };
 
-            // Triangle B: (row+1, col+1), (row, col+1), (row+1, col)
-            positions[i++] = (vec3){ row+1, col+1, z[2] };
-            positions[i++] = (vec3){ row,   col+1, z[1] };
-            positions[i++] = (vec3){ row+1, col,   z[3] };
+            // Triangle B: (col+1, row+1), (col+1, row), (col, row+1)
+            positions[i++] = (vec3){ col+1, row+1, z[2] };
+            positions[i++] = (vec3){ col+1, row,   z[1] };
+            positions[i++] = (vec3){ col,   row+1, z[3] };
         }
     }
 
@@ -304,7 +347,6 @@ View *View_New(GLFWwindow *window, const Terrain *terrain)
     glGenVertexArrays(1, &view->gl_terrain_vao);
     glBindVertexArray(view->gl_terrain_vao);
     {
-
         // Initialize vertex buffer
         glGenBuffers(1, &view->gl_terrain_positions);
         glBindBuffer(GL_ARRAY_BUFFER, view->gl_terrain_positions);
@@ -325,6 +367,10 @@ View *View_New(GLFWwindow *window, const Terrain *terrain)
     free(positions);
         // GL has copied the vertex data into GPU memory, so we can free our
         // buffer.
+
+    // Initialize color data
+    glGenBuffers(1, &view->gl_terrain_colors);
+    View_UpdateFaceColors(view);
 
     ////////////////////////////////////////////////////////////////////////////
     // Initialize axis data
@@ -792,6 +838,50 @@ DECLARE_RUNNABLE(move_camera, "camera", "<north> <east>")
 
 DECLARE_SUB_COMMANDS(move, "move", "translate scene entities", &move_camera);
 
-DECLARE_PROGRAM(&show, &hide, &info, &move);
+////////////////////////////////////////////////////////////////////////////////
+// Terrain
+//
+
+DECLARE_RUNNABLE(terrain_set, "set", "set the material of face (<row>, <col>) to <material>")
+{
+    if (argc != 3) {
+        TextField_PutLine((TextField *)console,
+            "command 'terrain set' takes three arguments");
+        return;
+    }
+
+    int row = atoi(argv[0]);
+    int col = atoi(argv[1]);
+    if (row < 0 || row >= Terrain_FaceHeight(view->terrain)) {
+        TextField_PutLine((TextField *)console, "row out of range");
+        return;
+    }
+    if (col < 0 || col >= Terrain_FaceHeight(view->terrain)) {
+        TextField_PutLine((TextField *)console, "col out of range");
+        return;
+    }
+
+    const Material *material;
+    if (strcasecmp("fairway", argv[2]) == 0) {
+        material = &fairway;
+    } else if (strcasecmp("rough", argv[2]) == 0) {
+        material = &rough;
+    } else if (strcasecmp("sand", argv[2]) == 0) {
+        material = &sand;
+    } else if (strcasecmp("water", argv[2]) == 0) {
+        material = &water;
+    } else {
+        TextField_PutLine((TextField *)console, "unrecognized material");
+        return;
+    }
+
+    Terrain_GetFace(view->terrain, row, col)->material = material;
+    View_UpdateFaceColors(view);
+}
+
+DECLARE_SUB_COMMANDS(terrain, "terrain", "inspect and manipulate the terrain",
+    &terrain_set);
+
+DECLARE_PROGRAM(&show, &hide, &info, &move, &terrain);
 
 #undef PROGRAM_INFO

@@ -18,6 +18,8 @@ typedef struct {
 
 extern const Material fairway;
 extern const Material rough;
+extern const Material sand;
+extern const Material water;
 
 typedef struct {
     uint16_t vertices[4];       ///< \brief z-coordinate of the four vertices

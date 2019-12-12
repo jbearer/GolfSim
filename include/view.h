@@ -15,7 +15,7 @@ typedef struct View View;
 /**
  * \brief Allocate and initialize a terrain view.
  */
-View *View_New(GLFWwindow *window, const Terrain *terrain);
+View *View_New(GLFWwindow *window, Terrain *terrain);
 
 /**
  * \brief Render a terrain view to the screen.
