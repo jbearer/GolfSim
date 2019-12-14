@@ -14,10 +14,12 @@ const Material water = {
     .color = { 0.1, 0.1, 0.7, 1.0 }
 };
 
-void Terrain_Init(Terrain *terrain, uint16_t width, uint16_t height)
+void Terrain_Init(Terrain *terrain,
+    uint16_t width, uint16_t height, uint8_t xy_resolution)
 {
     terrain->width = width;
     terrain->height = height;
+    terrain->xy_resolution = xy_resolution;
     terrain->faces = Malloc(Terrain_NumFaces(terrain)*sizeof(Face));
 
     for (uint16_t row = 0; row < Terrain_FaceHeight(terrain); ++row) {
@@ -32,9 +34,9 @@ void Terrain_Init(Terrain *terrain, uint16_t width, uint16_t height)
 static void Face_RaiseVertex(
     Terrain *terrain, uint16_t row, uint16_t col, uint8_t v, int16_t delta)
 {
-    assert(row < Terrain_FaceHeight(terrain));
-    assert(col < Terrain_FaceWidth(terrain));
-    assert(v < 4);
+    ASSERT(row < Terrain_FaceHeight(terrain));
+    ASSERT(col < Terrain_FaceWidth(terrain));
+    ASSERT(v < 4);
 
     Face *face = Terrain_GetFace(terrain, row, col);
     uint16_t *vertex = &face->vertices[v];
@@ -49,8 +51,8 @@ static void Face_RaiseVertex(
 void Terrain_RaiseVertex(
     Terrain *terrain, uint16_t row, uint16_t col, int16_t delta)
 {
-    assert(row <= Terrain_FaceHeight(terrain));
-    assert(col <= Terrain_FaceWidth(terrain));
+    ASSERT(row <= Terrain_FaceHeight(terrain));
+    ASSERT(col <= Terrain_FaceWidth(terrain));
 
     // We have a vertex at the intersection of up to four faces:
     //
@@ -69,20 +71,20 @@ void Terrain_RaiseVertex(
     // these faces independently.
 
     // F1
-    if (row > 0                           && col > 0) {
-        Face_RaiseVertex(terrain, row - 1, col - 1, 2, delta);
+    if (row < Terrain_FaceHeight(terrain) && col > 0) {
+        Face_RaiseVertex(terrain, row, col - 1, BOTTOM_RIGHT, delta);
     }
     // F2
-    if (row > 0                           && col < Terrain_FaceWidth(terrain)) {
-        Face_RaiseVertex(terrain, row - 1, col, 3, delta);
+    if (row < Terrain_FaceHeight(terrain) && col < Terrain_FaceWidth(terrain)) {
+        Face_RaiseVertex(terrain, row, col, BOTTOM_LEFT, delta);
     }
     // F3
-    if (row < Terrain_FaceHeight(terrain) && col < Terrain_FaceWidth(terrain)) {
-        Face_RaiseVertex(terrain, row, col, 0, delta);
+    if (row > 0                           && col < Terrain_FaceWidth(terrain)) {
+        Face_RaiseVertex(terrain, row - 1, col, TOP_LEFT, delta);
     }
     // F4
-    if (row < Terrain_FaceHeight(terrain) && col > 0) {
-        Face_RaiseVertex(terrain, row, col - 1, 1, delta);
+    if (row > 0                           && col > 0) {
+        Face_RaiseVertex(terrain, row - 1, col - 1, TOP_RIGHT, delta);
     }
 }
 

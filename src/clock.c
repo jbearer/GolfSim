@@ -1,6 +1,5 @@
 #include "os.h"
 
-#include <assert.h>
 #include <errno.h>
 #include <stdbool.h>
 #include <time.h>
@@ -17,7 +16,7 @@ uint64_t Clock_GetTimeMS(void)
     if (clock_gettime(CLOCK_MONOTONIC, &ts) < 0) {
         switch (errno) {
             case EFAULT:
-                assert(false);
+                ASSERT(false);
                     // Out of bounds access is a programming error, but the
                     // error-handling mechanism is for unexpected errors due to
                     // user input or system misbehavior, so in this case we'll
@@ -27,7 +26,7 @@ uint64_t Clock_GetTimeMS(void)
                 Error_Raise(WARNING, ERR_TIME, "no monotonic clock available");
                 break;
             default:
-                assert(false);
+                ASSERT(false);
                     // clock_gettime returned an undocumented error.
                 break;
         }

@@ -69,6 +69,15 @@ void Error_Log(LogLevel level, const char *fmt, ...);
 #define warn(fmt, ...) Error_Log(LOG_WARN, fmt, __VA_ARGS__)
 #define error(fmt, ...) Error_Log(LOG_ERROR, fmt, __VA_ARGS__)
 
+#ifdef NDEBUG
+#define ASSERT(x) do { (void)sizeof(x); } while (0)
+    // Silence unused variable warnings for variables which are only used in an
+    // assert, but don't evaluate the expression `x` at runtime.
+#else
+#include <assert.h>
+#define ASSERT(x) assert(x)
+#endif
+
 /**
  * \brief Allocate memory, terminating the program on failure.
  *

@@ -1,10 +1,10 @@
-#include <assert.h>
 #include <math.h>
 #include <stdint.h>
 #ifndef NDEBUG
 #include <stdio.h>
 #endif
 
+#include "errors.h"
 #include "matrix.h"
 
 void vec4_Proj3D(const vec4 *v4, vec3 *v3)
@@ -72,7 +72,7 @@ void mat4_FromQuaternion(mat4 *m, const vec4 *q)
     float z2 = z*z;
     float w2 = w*w;
 
-    assert(x2 + y2 + z2 + w2 == 1);
+    ASSERT(x2 + y2 + z2 + w2 == 1);
 
     *m = (mat4) {{
         { (1 - 2*y2 - 2*z2), (2*x*y - 2*z*w),   (2*x*z + 2*y*w),   0 },
@@ -113,20 +113,20 @@ void mat4_Perspective(mat4 *m, float fov, float aspect, float near, float far)
     // increasing depth into the screen) this forces a right-handed orientation
     // on the pre-perspective-transform coordinate system, which we want.
 
-    assert(0 < fov && fov < M_PI);
-    assert(aspect > 0);
-    assert(near > 0);
-    assert(far > near);
+    ASSERT(0 < fov && fov < M_PI);
+    ASSERT(aspect > 0);
+    ASSERT(near > 0);
+    ASSERT(far > near);
 
     float right = near*tanf(fov/2);
     float left = -right;
     float top = right/aspect;
     float bottom = -top;
 
-    assert(top > 0);
-    assert(bottom < 0);
-    assert(right > 0);
-    assert(left < 0);
+    ASSERT(top > 0);
+    ASSERT(bottom < 0);
+    ASSERT(right > 0);
+    ASSERT(left < 0);
 
     float height = top - bottom;
     float width = right - left;

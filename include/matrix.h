@@ -43,6 +43,62 @@ static inline void vec3_Scale(float scalar, const vec3 *in, vec3 *out)
     out->z = scalar*in->z;
 }
 
+/**
+ * \brief Store the cross-product of `u` and `v` in `out`.
+ */
+static inline void vec3_Cross(const vec3 *u, const vec3 *v, vec3 *out)
+{
+    out->x = u->y*v->z - u->z*v->y;
+    out->y = u->z*v->x - u->x*v->z;
+    out->z = u->x*v->y - u->y*v->x;
+}
+
+/**
+ * \brief Store the sum of `u` and `v` in `out`.
+ */
+static inline void vec3_Add(const vec3 *u, const vec3 *v, vec3 *out)
+{
+    out->x = u->x + v->x;
+    out->y = u->y + v->y;
+    out->z = u->z + v->z;
+}
+
+/**
+ * \brief Compute the sum of `u` and `v` and store it in `v`.
+ */
+static inline void vec3_AddInPlace(const vec3 *u, vec3 *v)
+{
+    vec3 out;
+    vec3_Add(u, v, &out);
+    *v = out;
+}
+
+/**
+ * \brief Return the norm of a vector.
+ */
+static inline float vec3_Norm(const vec3 *v)
+{
+    return sqrtf(v->x*v->x + v->y*v->y + v->z*v->z);
+}
+
+/**
+ * \brief Store a unit vector with the same direction as `v` in `out`.
+ */
+static inline void vec3_Normalize(const vec3 *v, vec3 *out)
+{
+    vec3_Scale(1/vec3_Norm(v), v, out);
+}
+
+/**
+ * \brief Compute a unit vector with the same direction as `v` and store it in `v`.
+ */
+static inline void vec3_NormalizeInPlace(vec3 *v)
+{
+    vec3 out;
+    vec3_Normalize(v, &out);
+    *v = out;
+}
+
 typedef struct {
     float x;
     float y;

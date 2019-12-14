@@ -1,4 +1,3 @@
-#include <assert.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -95,7 +94,7 @@ static void Font_Coords(char c, vec2 *v)
         // The font doesn't have an apostrophe, but it's a pretty important
         // character, so we hack it by using a comma shifted up.
         char *p = strchr(FONT_PUNCTUATION_CHARS, ',');
-        assert(p != NULL);
+        ASSERT(p != NULL);
 
         uintptr_t index = p - FONT_PUNCTUATION_CHARS;
         v->x = FONT_PUNCTUATION.x + (FONT_WIDTH*index);
@@ -107,7 +106,7 @@ static void Font_Coords(char c, vec2 *v)
             p = strchr(FONT_PUNCTUATION_CHARS, '?');
                 // Can't print this character, print a question mark instead.
         }
-        assert(p != NULL);
+        ASSERT(p != NULL);
 
         uintptr_t index = p - FONT_PUNCTUATION_CHARS;
         v->x = FONT_PUNCTUATION.x + (FONT_WIDTH*index);
@@ -405,7 +404,7 @@ void TextField_HideCursor(TextField *text_field)
 
 void TextField_SetCursor(TextField *text_field, uint8_t cursor)
 {
-    assert(cursor < text_field->width);
+    ASSERT(cursor < text_field->width);
     text_field->cursor_x = cursor;
 }
 

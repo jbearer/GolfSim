@@ -132,7 +132,7 @@ int main(int argc, char *const *argv)
 
     // Initialize game objects
     Terrain terrain;
-    Terrain_Init(&terrain, 50, 50);
+    Terrain_Init(&terrain, 50, 50, 10);
     View *view = View_New(window, &terrain);
 
     // Enable depth testing.
@@ -154,7 +154,7 @@ int main(int argc, char *const *argv)
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         curr_time = Clock_GetTimeMS();
-        assert(curr_time >= last_time);
+        ASSERT(curr_time >= last_time);
 
         if(curr_time - last_time < 10) {
             // We're running more than 100 frames per second, which is

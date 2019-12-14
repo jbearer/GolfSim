@@ -7,9 +7,9 @@
 #ifndef GOLF_TERRAIN_H
 #define GOLF_TERRAIN_H
 
-#include <assert.h>
 #include <stdint.h>
 
+#include "errors.h"
 #include "matrix.h"
 
 typedef struct {
@@ -39,10 +39,21 @@ typedef struct {
     const Material *material;   ///< Material covering this area.
 } Face;
 
+// Indices of vertices in Face::vertices, by spatial position.
+#define TOP_LEFT     0
+#define TOP_RIGHT    1
+#define BOTTOM_RIGHT 2
+#define BOTTOM_LEFT  3
+
 typedef struct {
-    uint16_t width;     ///< Number of edges
-    uint16_t height;    ///< Number of edges
-    Face *faces;        ///< Dimension width x height
+    uint16_t width;
+        ///< Number of edges
+    uint16_t height;
+        ///< Number of edges
+    uint8_t xy_resolution;
+        ///< Resolution in the XY plane; that is, the length or width of a face
+    Face *faces;
+        ///< Dimension width x height
 } Terrain;
 
 /**
@@ -126,8 +137,8 @@ static inline uint32_t Terrain_NumVertices(const Terrain *terrain)
 static inline Face *Terrain_GetFace(
     Terrain *terrain, uint16_t row, uint16_t col)
 {
-    assert(row < Terrain_FaceHeight(terrain));
-    assert(col < Terrain_FaceWidth(terrain));
+    ASSERT(row < Terrain_FaceHeight(terrain));
+    ASSERT(col < Terrain_FaceWidth(terrain));
     return &terrain->faces[row*Terrain_FaceWidth(terrain) + col];
 }
 
@@ -143,18 +154,20 @@ static inline Face *Terrain_GetFace(
 static inline const Face *Terrain_GetConstFace(
     const Terrain *terrain, uint16_t row, uint16_t col)
 {
-    assert(row < Terrain_FaceHeight(terrain));
-    assert(col < Terrain_FaceWidth(terrain));
+    ASSERT(row < Terrain_FaceHeight(terrain));
+    ASSERT(col < Terrain_FaceWidth(terrain));
     return &terrain->faces[row*Terrain_FaceWidth(terrain) + col];
 }
 
 /**
  * \brief Initialize a terrain object.
  *
- * \param width  The width of the terrain in faces.
- * \param height The height of the terrain in faces.
+ * \param width         The width of the terrain in faces.
+ * \param height        The height of the terrain in faces.
+ * \param xy_resolution The length and width of each face, in yards.
  */
-void Terrain_Init(Terrain *terrain, uint16_t width, uint16_t height);
+void Terrain_Init(Terrain *terrain,
+    uint16_t width, uint16_t height, uint8_t xy_resolution);
 
 /**
  * \brief Raise or lower the z-coordinate of a face.

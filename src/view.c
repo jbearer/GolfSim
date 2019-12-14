@@ -1,4 +1,3 @@
-#include <assert.h>
 #include <stdlib.h>
 #include <strings.h>
 
@@ -12,7 +11,7 @@
 #include "text.h"
 #include "view.h"
 
-#define CAMERA_PAN_YDS_MS 0.02
+#define CAMERA_PAN_YDS_MS 0.2
     // How fast the camera should pan when the user's mouse is positioned on an
     // edge of the window, in yds/ms.
 
@@ -76,7 +75,7 @@ struct View {
     Console console;
     float camera_x;
     float camera_y;
-    uint8_t camera_zoom;
+    uint16_t camera_zoom;
 
     mat4 projection;
         // Perspective projection matrix for the scene. Converts camera
@@ -96,6 +95,7 @@ struct View {
     bool show_terrain_mesh;
     GLuint gl_terrain_vao;          // Vertex array object
     GLuint gl_terrain_positions;    // Position buffer
+    GLuint gl_terrain_normals;      // Normal buffer
     GLuint gl_terrain_colors;       // Color buffer
     GLuint gl_terrain_shaders;      // Shader program
     GLuint gl_terrain_shader_mvp;   // MVP matrix
@@ -240,15 +240,170 @@ static void View_UpdateMVP(View *view)
     glUseProgram(0);
 }
 
+static void View_VertexNormal(
+    const View *view, uint16_t row, uint16_t col, vec3 *n)
+{
+    const Terrain *terrain = view->terrain;
+    ASSERT(row < Terrain_VertexHeight(terrain));
+    ASSERT(col < Terrain_VertexWidth(terrain));
+
+    // The normal of a vertex incident to four faces:
+    //
+    //                   col-1      col       col+1
+    //               row+1 ----------^-----------
+    //                     |         |          |
+    //                     |   F1   E12   F2    |
+    //                     |         |          |
+    //               row   <---E41---*----E23--->
+    //                     |         |          |
+    //                     |   F4   E34   F3    |
+    //                     |         |          |
+    //               row-1 ----------V-----------
+    //
+    // is given by
+    //                       N1 + N2 + N3 + N4
+    //                     ---------------------
+    //                      |N1 + N2 + N3 + N4|
+    // where Ni is the normal vector for face Fi. The normal for a face is
+    // obtained by taking the cross-product of two of the edges of that face.
+    // For example,
+    //                        N1 = E12 x E41
+    //
+    // There are a couple of subtleties here:
+    //
+    // First, note that the order in which we cross the edges to get the normal
+    // for a face matters. For instance, E41 x E12 = -(E12 x E41) = -N1 != N1.
+    // Since we are working in a right-handed coordinate system, we use the
+    // right- hand rule to find the order in which to cross the edges. Since we
+    // want our terrain to be facing up (that is, in the positive z- direction)
+    // we cross the edges in order of a counter-clockwise traversal of the face
+    // starting from our vertex of interest, and we always choose the two edges
+    // which share that vertex. In the example of F1, we start from the point
+    // marked start and proceed counter-clockwise, taking E12 as our first edge.
+    // We skip the top edge and the left edge, since they do not share the
+    // starred vertex, and then finally we reach E41 as our second edge.
+    //
+    // Second, you may notice that we may compute a different normal for the
+    // same face depending on which edges we use to compute the normal for that
+    // face (and, therefeore, depending on which incident vertex we are working
+    // on). This happens because our faces are quadrilaterals (not triangles)
+    // and thus the incident vertices may not all be coplanar, so it makes sense
+    // that different vertices would observe different normals. The algorithm
+    // outlined above for choosing edges uses the normal vector of the half-face
+    // triangle closest to the center vertex, so when we compute the normal for
+    // a vertex, we are really computing the normal for the inner area in this
+    // picture:
+    //
+    //                     ----------^,----------
+    //                     |     .,` | `.,      |
+    //                     |  .,`    |    `.,   |
+    //                     |,`       |       `. |
+    //                     <---------*---------->
+    //                     |`.,      |      .,` |
+    //                     |   `.,   |   .,`    |
+    //                     |      `. | ,`       |
+    //                     ----------V-----------
+    //
+    // Only two of the four interior edges in the diagram above are actually
+    // represented in the mesh (one parallel pair). The other two faces have an
+    // interior edge which is perpendicular to the one shown. This means that
+    // for non-planar faces, the shading induced by the normal vectors may
+    // differ slightly from the actual shape of the mesh.
+    //
+    // We can fix this problem in the future by adding an extra vertex to the
+    // center of every face, so that each faces looks like:
+    //                 -----------
+    //                 |`,.   .,`|
+    //                 |   :,:   |
+    //                 |.,`   `,.|
+    //                 -----------
+    //
+    // This will allow us to both elevate and shade any vertex on the face
+    // independently of the opposite vertex, and will make the face rotationally
+    // symmetric, as opposed to the current faces which are biased in a
+    // direction determined by their one interior edge.
+
+    // Get a reference to each face incident to the current vertex, or NULL if
+    // there is no such face (because the current vertex is up against an edge
+    // of the terrain).
+    bool at_top_edge    = row + 1 == Terrain_VertexHeight(terrain);
+    bool at_bottom_edge = row     == 0;
+    bool at_left_edge   = col     == 0;
+    bool at_right_edge  = col + 1 == Terrain_VertexWidth(terrain);
+    const Face *f1 = at_left_edge || at_top_edge ? NULL :
+                        Terrain_GetConstFace(terrain, row, col - 1);
+    const Face *f2 = at_right_edge || at_top_edge ? NULL :
+                        Terrain_GetConstFace(terrain, row, col);
+    const Face *f3 = at_right_edge || at_bottom_edge ? NULL :
+                        Terrain_GetConstFace(terrain, row - 1, col);
+    const Face *f4 = at_left_edge || at_bottom_edge ? NULL :
+                        Terrain_GetConstFace(terrain, row - 1, col - 1);
+
+    // Get the z-coordinate of the current vertex from one of the faces.
+    ASSERT(f1 || f2 || f3 || f4);
+        // In any non-empty terrain, every vertex touches at least one face.
+    float z = f1 ? f1->vertices[BOTTOM_RIGHT]
+            : f2 ? f2->vertices[BOTTOM_LEFT]
+            : f3 ? f3->vertices[TOP_LEFT]
+            :      f4->vertices[TOP_RIGHT];
+
+    // Find the height of the vertex at the endpoint of each of the four edges.
+    // We will need this information to compute the edges themselves. If in any
+    // case there is no such vertex, we will use the height of the current
+    // vertex. This is like surrounding the terrain with a hypothetical extra
+    // row of vertices, which are each the same height as the vertex in the
+    // terrain to which they are perpendicular.
+    const float z12 = f1 ? f1->vertices[TOP_RIGHT]
+                    : f2 ? f2->vertices[TOP_LEFT]
+                    :      z;
+    const float z23 = f2 ? f2->vertices[BOTTOM_RIGHT]
+                    : f3 ? f3->vertices[TOP_RIGHT]
+                    :      z;
+    const float z34 = f3 ? f3->vertices[BOTTOM_LEFT]
+                    : f4 ? f4->vertices[BOTTOM_RIGHT]
+                    :      z;
+    const float z41 = f4 ? f4->vertices[TOP_LEFT]
+                    : f1 ? f1->vertices[BOTTOM_LEFT]
+                    :      z;
+
+    // Compute the edge vectors. Each edge has XY direction +-(0, 1) or +-(1,
+    // 0), and the z-distance for each is obtained by subtracting the height of
+    // the vertex at the end of the edge from the height of the current vertex
+    // (z).
+    const vec3 e12 = { 0,  1, z12 - z };
+    const vec3 e23 = { 1,  0, z23 - z };
+    const vec3 e34 = { 0, -1, z34 - z };
+    const vec3 e41 = {-1,  0, z41 - z };
+
+    // Compute the normal vectors for each face.
+    vec3 n1; vec3_Cross(&e12, &e41, &n1);
+    vec3 n2; vec3_Cross(&e23, &e12, &n2);
+    vec3 n3; vec3_Cross(&e34, &e23, &n3);
+    vec3 n4; vec3_Cross(&e41, &e34, &n4);
+
+    // Add the vectors together to get the (unnormalized) normal.
+    *n = (vec3){ 0, 0, 0 };
+    vec3_AddInPlace(&n1, n);
+    vec3_AddInPlace(&n2, n);
+    vec3_AddInPlace(&n3, n);
+    vec3_AddInPlace(&n4, n);
+
+    // Normalize so the normal is a unit vector.
+    vec3_NormalizeInPlace(n);
+}
+
 static void View_UpdateFaceHeights(View *view)
 {
     vec3 *positions = Malloc(sizeof(vec3)*view->num_vertices);
     uint32_t i = 0; // Index of current vertex in `positions`.
 
+    uint8_t w = view->terrain->xy_resolution;
+    uint8_t h = view->terrain->xy_resolution;
+
     // Initialize x-y vertex positions, 2 triangles for each face.
     for (uint16_t row = 0; row < Terrain_FaceHeight(view->terrain); ++row) {
         for (uint16_t col = 0; col < Terrain_FaceWidth(view->terrain); ++col) {
-            assert(i < view->num_vertices);
+            ASSERT(i < view->num_vertices);
 
             const Face *face = Terrain_GetConstFace(view->terrain, row, col);
             const uint16_t *z = face->vertices;
@@ -258,24 +413,24 @@ static void View_UpdateFaceHeights(View *view)
             //
             //        col   col+1
             //         |      |
-            //   row --+------+--
+            // row+1 --+------+--
             //         | A  / |
             //         |   /  |
             //         |  /   |
             //         | /  B |
-            // row+1 --+------+--
+            // row   --+------+--
             //         |      |
             //
 
-            // Triangle A: (col, row), (col+1, row), (col, row+1)
-            positions[i++] = (vec3){ col,   row,   z[0] };
-            positions[i++] = (vec3){ col+1, row,   z[1] };
-            positions[i++] = (vec3){ col,   row+1, z[3] };
+            // Triangle A
+            positions[i++] = (vec3){ w*col,     h*(row+1), z[TOP_LEFT] };
+            positions[i++] = (vec3){ w*col,     h*row,     z[BOTTOM_LEFT] };
+            positions[i++] = (vec3){ w*(col+1), h*(row+1), z[TOP_RIGHT] };
 
-            // Triangle B: (col+1, row+1), (col+1, row), (col, row+1)
-            positions[i++] = (vec3){ col+1, row+1, z[2] };
-            positions[i++] = (vec3){ col+1, row,   z[1] };
-            positions[i++] = (vec3){ col,   row+1, z[3] };
+            // Triangle B
+            positions[i++] = (vec3){ w*(col+1), h*row,     z[BOTTOM_RIGHT] };
+            positions[i++] = (vec3){ w*(col+1), h*(row+1), z[TOP_RIGHT] };
+            positions[i++] = (vec3){ w*col,     h*row,     z[BOTTOM_LEFT] };
         }
     }
 
@@ -283,7 +438,6 @@ static void View_UpdateFaceHeights(View *view)
     glBindVertexArray(view->gl_terrain_vao);
     {
         // Initialize vertex buffer
-        glGenBuffers(1, &view->gl_terrain_positions);
         glBindBuffer(GL_ARRAY_BUFFER, view->gl_terrain_positions);
         {
             glBufferData(
@@ -302,6 +456,62 @@ static void View_UpdateFaceHeights(View *view)
     free(positions);
         // GL has copied the vertex data into GPU memory, so we can free our
         // buffer.
+
+    // Initialize vertex normals.
+    vec3 *normals = Malloc(sizeof(vec3)*view->num_vertices);
+    i = 0;
+    for (uint16_t row = 0; row < Terrain_FaceHeight(view->terrain); ++row) {
+        for (uint16_t col = 0; col < Terrain_FaceWidth(view->terrain); ++col) {
+            ASSERT(i < view->num_vertices);
+
+            // Compute normals for each of the 6 vertices corresponding to the
+            // 2 triangles for this face:
+            //
+            //        col   col+1
+            //         |      |
+            // row+1 --+------+--
+            //         | A  / |
+            //         |   /  |
+            //         |  /   |
+            //         | /  B |
+            // row   --+------+--
+            //         |      |
+            //
+
+            // Triangle A
+            View_VertexNormal(view, row + 1, col,     &normals[i++]);
+            View_VertexNormal(view, row,     col,     &normals[i++]);
+            View_VertexNormal(view, row + 1, col + 1, &normals[i++]);
+
+            // Triangle B
+            View_VertexNormal(view, row,     col + 1, &normals[i++]);
+            View_VertexNormal(view, row + 1, col + 1, &normals[i++]);
+            View_VertexNormal(view, row,     col,     &normals[i++]);
+        }
+    }
+
+    // Copy data into OpenGL's vertex buffer.
+    glBindVertexArray(view->gl_terrain_vao);
+    {
+        // Initialize vertex buffer
+        glBindBuffer(GL_ARRAY_BUFFER, view->gl_terrain_normals);
+        {
+            glBufferData(
+                GL_ARRAY_BUFFER,
+                sizeof(vec3)*view->num_vertices,
+                normals,
+                GL_DYNAMIC_DRAW
+            );
+            glVertexAttribPointer(
+                VERTEX_ATTRIB_NORMAL, 3, GL_FLOAT, GL_FALSE, 0, 0);
+            glEnableVertexAttribArray(VERTEX_ATTRIB_NORMAL);
+        }
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+    glBindVertexArray(0);
+    free(normals);
+        // GL has copied the vertex data into GPU memory, so we can free our
+        // buffer.
 }
 
 static void View_UpdateFaceColors(View *view)
@@ -311,7 +521,7 @@ static void View_UpdateFaceColors(View *view)
 
     for (uint16_t row = 0; row < Terrain_FaceWidth(view->terrain); ++row) {
         for (uint16_t col = 0; col < Terrain_FaceHeight(view->terrain); ++col) {
-            assert(i < view->num_vertices);
+            ASSERT(i < view->num_vertices);
 
             const Face *face = Terrain_GetConstFace(view->terrain, row, col);
 
@@ -356,7 +566,7 @@ View *View_New(GLFWwindow *window, Terrain *terrain)
     view->show_axes = true;
     view->camera_x = 0;
     view->camera_y = 0;
-    view->camera_zoom = 30;
+    view->camera_zoom = 300;
 
 #ifndef NDEBUG
     memset(view->dts, 0, sizeof(view->dts));
@@ -371,6 +581,8 @@ View *View_New(GLFWwindow *window, Terrain *terrain)
     view->num_vertices = 6*Terrain_NumFaces(terrain);
         // Each square face consists of 2 triangles, so 6 vertices.
     glGenVertexArrays(1, &view->gl_terrain_vao);
+    glGenBuffers(1, &view->gl_terrain_positions);
+    glGenBuffers(1, &view->gl_terrain_normals);
     View_UpdateFaceHeights(view);
 
     // Initialize color data
@@ -396,6 +608,22 @@ View *View_New(GLFWwindow *window, Terrain *terrain)
         view->gl_terrain_shaders, "mvp");
     view->gl_terrain_shader_mesh = glGetUniformLocation(
         view->gl_terrain_shaders, "mesh");
+
+    // The light values are global constants that never change.
+    glUseProgram(view->gl_terrain_shaders);
+    {
+        GLuint light_position = glGetUniformLocation(
+            view->gl_terrain_shaders, "light_position");
+        glUniform3f(light_position, -0.2, -0.1, 1.5);
+            // We position the sun in quadrant 4, because that is also where the
+            // camera is positioned, so terrain facing the user will be more
+            // illuminated than terrain facing away.
+
+        GLuint light_color = glGetUniformLocation(
+            view->gl_terrain_shaders, "light_color");
+        glUniform4f(light_color, 1, 1, 0.85, 1);
+    }
+    glUseProgram(0);
 
     // Axis shader
     view->gl_axis_shaders = GL_LoadShaders(
@@ -611,8 +839,8 @@ static void View_Animate(View *view, uint32_t dt)
     // Clip the northerly delta so that the camera doesn't slide so far north or
     // south that we lose sight of the terrain and get lost.
     vec2 north_corner = View_XYtoEN((vec2){
-        Terrain_FaceWidth(view->terrain),
-        Terrain_FaceHeight(view->terrain)
+        Terrain_FaceWidth(view->terrain)*view->terrain->xy_resolution,
+        Terrain_FaceHeight(view->terrain)*view->terrain->xy_resolution
     });
     if (camera.y + north > north_corner.y) {
         // The north delta would take us north of the northernmost corner of the
@@ -625,9 +853,10 @@ static void View_Animate(View *view, uint32_t dt)
     }
 
     // Clip the easterly delta in the same way.
-    vec2 east_corner = View_XYtoEN((vec2){Terrain_FaceWidth(view->terrain), 0});
-    vec2 west_corner = View_XYtoEN(
-        (vec2){0, Terrain_FaceHeight(view->terrain)});
+    vec2 east_corner = View_XYtoEN((vec2){
+        Terrain_FaceWidth(view->terrain)*view->terrain->xy_resolution, 0});
+    vec2 west_corner = View_XYtoEN((vec2){
+        0, Terrain_FaceHeight(view->terrain)*view->terrain->xy_resolution});
     if (camera.x + east > east_corner.x) {
         east = east_corner.x - camera.x;
     } else if (camera.x + east < west_corner.x) {
@@ -856,6 +1085,21 @@ DECLARE_SUB_COMMANDS(camera, "camera", "inspect and manipulate the camera",
 // Terrain
 //
 
+static const Material *ParseMaterial(const char *name)
+{
+    if (strcasecmp("fairway", name) == 0) {
+        return &fairway;
+    } else if (strcasecmp("rough", name) == 0) {
+        return &rough;
+    } else if (strcasecmp("sand", name) == 0) {
+        return &sand;
+    } else if (strcasecmp("water", name) == 0) {
+        return &water;
+    } else {
+        return NULL;
+    }
+}
+
 DECLARE_RUNNABLE(terrain_set, "set",
     "set the material of face (<row>, <col>) to <material>")
 {
@@ -876,21 +1120,59 @@ DECLARE_RUNNABLE(terrain_set, "set",
         return;
     }
 
-    const Material *material;
-    if (strcasecmp("fairway", argv[2]) == 0) {
-        material = &fairway;
-    } else if (strcasecmp("rough", argv[2]) == 0) {
-        material = &rough;
-    } else if (strcasecmp("sand", argv[2]) == 0) {
-        material = &sand;
-    } else if (strcasecmp("water", argv[2]) == 0) {
-        material = &water;
-    } else {
+    const Material *material = ParseMaterial(argv[2]);
+    if (material == NULL) {
         TextField_PutLine((TextField *)console, "unrecognized material");
         return;
     }
 
     Terrain_GetFace(view->terrain, row, col)->material = material;
+    View_UpdateFaceColors(view);
+}
+
+DECLARE_RUNNABLE(terrain_bulk_set, "bulk-set",
+    "set the material of a rectangular region")
+{
+    if (argc != 5) {
+        TextField_PutLine((TextField *)console,
+            "command 'terrain bulk-set' takes five arguments");
+        return;
+    }
+
+    int start_row = atoi(argv[0]);
+    int start_col = atoi(argv[1]);
+    int end_row   = atoi(argv[2]);
+    int end_col   = atoi(argv[3]);
+
+    if (start_row < 0 || start_row >= Terrain_FaceHeight(view->terrain)) {
+        TextField_PutLine((TextField *)console, "start row out of range");
+        return;
+    }
+    if (start_col < 0 || start_col >= Terrain_FaceWidth(view->terrain)) {
+        TextField_PutLine((TextField *)console, "start col out of range");
+        return;
+    }
+    if (end_row < 0 || end_row >= Terrain_FaceHeight(view->terrain)) {
+        TextField_PutLine((TextField *)console, "end row out of range");
+        return;
+    }
+    if (end_col < 0 || end_col >= Terrain_FaceWidth(view->terrain)) {
+        TextField_PutLine((TextField *)console, "end col out of range");
+        return;
+    }
+
+    const Material *material = ParseMaterial(argv[4]);
+    if (material == NULL) {
+        TextField_PutLine((TextField *)console, "unrecognized material");
+        return;
+    }
+
+    for (int row = start_row; row <= end_row; ++row) {
+        for (int col = start_col; col <= end_col; ++col) {
+            Terrain_GetFace(view->terrain, row, col)->material = material;
+        }
+    }
+
     View_UpdateFaceColors(view);
 }
 
@@ -919,6 +1201,48 @@ DECLARE_RUNNABLE(terrain_raise_face, "raise-face",
     View_UpdateFaceHeights(view);
 }
 
+DECLARE_RUNNABLE(terrain_bulk_raise_face, "bulk-raise-face",
+    "raise (or lower) the faces in a rectangular region")
+{
+    if (argc != 5) {
+        TextField_PutLine((TextField *)console,
+            "command 'terrain bulk-raise-face' takes five arguments");
+        return;
+    }
+
+    int start_row = atoi(argv[0]);
+    int start_col = atoi(argv[1]);
+    int end_row   = atoi(argv[2]);
+    int end_col   = atoi(argv[3]);
+
+    int delta = atoi(argv[4]);
+
+    if (start_row < 0 || start_row >= Terrain_FaceHeight(view->terrain)) {
+        TextField_PutLine((TextField *)console, "start row out of range");
+        return;
+    }
+    if (start_col < 0 || start_col >= Terrain_FaceWidth(view->terrain)) {
+        TextField_PutLine((TextField *)console, "start col out of range");
+        return;
+    }
+    if (end_row < 0 || end_row >= Terrain_FaceHeight(view->terrain)) {
+        TextField_PutLine((TextField *)console, "end row out of range");
+        return;
+    }
+    if (end_col < 0 || end_col >= Terrain_FaceWidth(view->terrain)) {
+        TextField_PutLine((TextField *)console, "end col out of range");
+        return;
+    }
+
+    for (int row = start_row; row <= end_row; ++row) {
+        for (int col = start_col; col <= end_col; ++col) {
+            Terrain_RaiseFace(view->terrain, row, col, delta);
+        }
+    }
+
+    View_UpdateFaceHeights(view);
+}
+
 DECLARE_RUNNABLE(terrain_raise_vertex, "raise-vertex",
     "raise (or lower) the vertex at (<row>, <col>) by <delta>")
 {
@@ -944,8 +1268,124 @@ DECLARE_RUNNABLE(terrain_raise_vertex, "raise-vertex",
     View_UpdateFaceHeights(view);
 }
 
+DECLARE_RUNNABLE(terrain_bulk_raise_vertex, "bulk-raise-vertex",
+    "raise (or lower) the vertices in a rectangular region")
+{
+    if (argc != 5) {
+        TextField_PutLine((TextField *)console,
+            "command 'terrain bulk-raise-vertex' takes five arguments");
+        return;
+    }
+
+    int start_row = atoi(argv[0]);
+    int start_col = atoi(argv[1]);
+    int end_row   = atoi(argv[2]);
+    int end_col   = atoi(argv[3]);
+
+    int delta = atoi(argv[4]);
+
+    if (start_row < 0 || start_row >= Terrain_VertexHeight(view->terrain)) {
+        TextField_PutLine((TextField *)console, "start row out of range");
+        return;
+    }
+    if (start_col < 0 || start_col >= Terrain_VertexWidth(view->terrain)) {
+        TextField_PutLine((TextField *)console, "start col out of range");
+        return;
+    }
+    if (end_row < 0 || end_row >= Terrain_VertexHeight(view->terrain)) {
+        TextField_PutLine((TextField *)console, "end row out of range");
+        return;
+    }
+    if (end_col < 0 || end_col >= Terrain_VertexWidth(view->terrain)) {
+        TextField_PutLine((TextField *)console, "end col out of range");
+        return;
+    }
+
+    for (int row = start_row; row <= end_row; ++row) {
+        for (int col = start_col; col <= end_col; ++col) {
+            Terrain_RaiseVertex(view->terrain, row, col, delta);
+        }
+    }
+
+    View_UpdateFaceHeights(view);
+}
+
+DECLARE_RUNNABLE(terrain_info_normal, "normal",
+    "print the normal vector for the vertex at (<row>, <col>)")
+{
+    if (argc != 2) {
+        TextField_PutLine((TextField *)console,
+            "command 'terrain info normal' takes two arguments");
+        return;
+    }
+
+    int row = atoi(argv[0]);
+    int col = atoi(argv[1]);
+    if (row < 0 || row >= Terrain_VertexHeight(view->terrain)) {
+        TextField_PutLine((TextField *)console, "row out of range");
+        return;
+    }
+    if (col < 0 || col >= Terrain_VertexWidth(view->terrain)) {
+        TextField_PutLine((TextField *)console, "col out of range");
+        return;
+    }
+
+    vec3 n;
+    View_VertexNormal(view, row, col, &n);
+    TextField_Printf((TextField *)console, "%.3f %.3f %.3f\n", n.x, n.y, n.z);
+}
+
+DECLARE_RUNNABLE(terrain_info_height, "height",
+    "print the height of the vertex at (<row>, <col>)")
+{
+    if (argc != 2) {
+        TextField_PutLine((TextField *)console,
+            "command 'terrain info normal' takes two arguments");
+        return;
+    }
+
+    int row = atoi(argv[0]);
+    int col = atoi(argv[1]);
+    if (row < 0 || row >= Terrain_VertexHeight(view->terrain)) {
+        TextField_PutLine((TextField *)console, "row out of range");
+        return;
+    }
+    if (col < 0 || col >= Terrain_VertexWidth(view->terrain)) {
+        TextField_PutLine((TextField *)console, "col out of range");
+        return;
+    }
+
+    unsigned height;
+    if (row == 0) {
+        if (col == 0) {
+            height = Terrain_GetConstFace(
+                view->terrain, 0, 0)->vertices[BOTTOM_LEFT];
+        } else {
+            height = Terrain_GetConstFace(
+                view->terrain, 0, col - 1)->vertices[BOTTOM_RIGHT];
+        }
+    } else {
+        if (col == 0) {
+            height = Terrain_GetConstFace(
+                view->terrain, row - 1, 0)->vertices[TOP_LEFT];
+        } else {
+            height = Terrain_GetConstFace(
+                view->terrain, row - 1, col - 1)->vertices[TOP_RIGHT];
+        }
+    }
+
+    TextField_Printf((TextField *)console, "%u\n", height);
+}
+
+DECLARE_SUB_COMMANDS(terrain_info, "info",
+    "get information about various aspects of the terrain",
+    &terrain_info_normal, &terrain_info_height);
+
 DECLARE_SUB_COMMANDS(terrain, "terrain", "inspect and manipulate the terrain",
-    &terrain_set, &terrain_raise_face, &terrain_raise_vertex);
+    &terrain_set, &terrain_bulk_set,
+    &terrain_raise_face, &terrain_bulk_raise_face,
+    &terrain_raise_vertex, &terrain_bulk_raise_vertex,
+    &terrain_info);
 
 DECLARE_PROGRAM(&show, &hide, &window, &camera, &terrain);
 

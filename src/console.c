@@ -1,6 +1,8 @@
-#include <assert.h>
+#include <errno.h>
+#include <stdio.h>
 #include <string.h>
 
+#include "errors.h"
 #include "text.h"
 
 #if !(_SVID_SOURCE || _BSD_SOURCE || _POSIX_C_SOURCE >= 1 || _XOPEN_SOURCE || _POSIX_SOURCE)
@@ -32,8 +34,8 @@ char *strtok_r(char *str, const char *delim, char **saveptr)
         // token.
 
     // We can't return an empty token or a delimiter character.
-    assert(*tok != '\0');
-    assert(strchr(delim, *tok) == NULL);
+    ASSERT(*tok != '\0');
+    ASSERT(strchr(delim, *tok) == NULL);
 
     // Consume non-delimiter bytes to find the end of this token.
     while (**saveptr && strchr(delim, **saveptr) == NULL) {
@@ -41,7 +43,7 @@ char *strtok_r(char *str, const char *delim, char **saveptr)
     }
 
     if (**saveptr) {
-        assert(strchr(delim, **saveptr) != NULL);
+        ASSERT(strchr(delim, **saveptr) != NULL);
 
         **saveptr = '\0';
             // Write '\0' into the place of the first delimiter character to
@@ -110,7 +112,7 @@ static void Console_HandleLine(TextInput *text_input, char *line)
         // Internal state for `strtok_r`.
     const Command *command = console->program;
         // Root command of the program.
-    assert(command->type == SUB_COMMANDS);
+    ASSERT(command->type == SUB_COMMANDS);
 
     const char *argv[TextField_GetWidth((TextField *)console) / 2];
         // Arguments are whitespace separated, so as a conservatie approximation
@@ -125,13 +127,24 @@ static void Console_HandleLine(TextInput *text_input, char *line)
         return;
     }
 
-    // Parse first token: either "help" or a top-level command.
+    // Parse first token: either "help", a built-in command, or a top-level
+    // command.
     if (strcmp("help", tok) == 0) {
         // Asking for help, either for the whole program or for a subcommand.
         help = true;
+    } else if (strcmp("source", tok) == 0) {
+        tok = strtok_r(NULL, WS, &saveptr);
+        if (tok == NULL) {
+            TextField_PutLine((TextField *)console,
+                "command 'source' takes one argument");
+            return;
+        }
+
+        Console_RunScript(console, tok, false);
+        return;
     } else {
         // tok is not "help", meaning it must be the first part of a command.
-        assert(command->type == SUB_COMMANDS);
+        ASSERT(command->type == SUB_COMMANDS);
             // We're still at the top-level program, so we must have at least
             // one level of sub-commands.
 
@@ -172,8 +185,8 @@ static void Console_HandleLine(TextInput *text_input, char *line)
         }
 
         if (command != console->program) {
-            assert(command->name != NULL);
-            assert(command->help != NULL);
+            ASSERT(command->name != NULL);
+            ASSERT(command->help != NULL);
 
             // If this is not the unnamed root command, format the command's
             // name and help string.
@@ -193,6 +206,14 @@ static void Console_HandleLine(TextInput *text_input, char *line)
 
             // Print the list of available sub-commands.
             TextField_PutLine((TextField *)console, "Available sub-commmands:");
+
+            // Built-in commands, if this is the top level.
+            if (command == console->program) {
+                TextField_PutLine((TextField *)console,
+                    "  source - run commands from a file");
+            }
+
+            // User-declared sub-commands.
             for (uint8_t i = 0;
                  i < command->impl.sub_commands.num_commands;
                  ++i) {
@@ -217,7 +238,7 @@ static void Console_HandleLine(TextInput *text_input, char *line)
     }
 
     // Run the command.
-    assert(command->type == RUN_COMMAND);
+    ASSERT(command->type == RUN_COMMAND);
     command->impl.run(console, console->state, argc, argv);
 }
 
@@ -242,4 +263,52 @@ void Console_Init(Console *console, GLFWwindow *window,
 void Console_Render(const Console *console)
 {
     TextInput_Render((const TextInput *)console);
+}
+
+static char *Console_StripWhitespace(char *str)
+{
+    char *stripped = str;
+
+    // Advance `stripped` to the first non-whitespace character in `str`.
+    while (*stripped && strchr(" \t\n", *stripped) != NULL) {
+        ++stripped;
+    }
+
+    // Get a pointer to the end of `stripped`.
+    char *last = &stripped[strlen(stripped)];
+
+    // While `last` points to whitespace, overwrite it with null characters and
+    // move it back towards the start of the string. This effectively strips
+    // trailing whitespace from the string.
+    while (last != stripped && strchr(" \t\n\0", *last) != NULL) {
+        *last-- = '\0';
+    }
+
+    return stripped;
+}
+
+void Console_RunScript(Console *console, const char *script_path, bool echo)
+{
+    FILE *file = fopen(script_path, "r");
+    if (file == NULL) {
+        TextField_PutLine((TextField *)console, strerror(errno));
+        return;
+    }
+
+    uint8_t width = TextField_GetWidth((TextField *)console);
+    char line[width];
+    while (fgets(line, width, file) != NULL) {
+        char *stripped = Console_StripWhitespace(line);
+        if (*stripped == '\0' || *stripped == '#') {
+            // Skip empty lines and comments.
+            continue;
+        }
+
+        if (echo) {
+            // Echo the line being processed.
+            TextField_Printf((TextField *)console, "$ %s\n", stripped);
+        }
+
+        Console_HandleLine((TextInput *)console, line);
+    }
 }

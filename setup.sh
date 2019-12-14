@@ -31,6 +31,8 @@ if $RUN_CMAKE; then
     CMAKE_FLAGS=""
     if $BUILD_DEBUG; then
         CMAKE_FLAGS+=" -DCMAKE_BUILD_TYPE=Debug"
+    else
+        CMAKE_FLAGS+=" -DCMAKE_BUILD_TYPE=MinSizeRel"
     fi
 
     pushd build

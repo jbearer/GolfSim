@@ -1,4 +1,3 @@
-#include <assert.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -23,7 +22,9 @@ static void GL_CompileShader(GLuint shader, const char *source_path)
     fseek(file, 0, SEEK_SET);
 
     char *source = Malloc(file_size);
-    fread(source, 1, file_size, file);
+    if (fread(source, 1, file_size, file) != (size_t)file_size) {
+        Error_Raise(FATAL, ERR_IO, "unable to read shader program");
+    }
     fclose(file);
 
     // Compile the shader
@@ -113,7 +114,9 @@ typedef enum {
 
 static void BMP_ReadHeader(BmpHeader *header, FILE *bmp)
 {
-    fread(header, 1, sizeof(*header), bmp);
+    if (fread(header, 1, sizeof(*header), bmp) != sizeof(*header)) {
+        Error_Raise(FATAL, ERR_IO, "unable to read bitmap header");
+    }
     if (header->magic_number[0] != 'B' ||
         header->magic_number[1] != 'M') {
         Error_Raise(FATAL, ERR_IO, "invalid bitmap texture");
@@ -155,7 +158,7 @@ static uint8_t *BMP_ReadData(const BmpHeader *header, FILE *bmp)
 
     // Compute the size of the image. The `image_size` field in the header is
     // not always reliable, sometimes it is incorrectly 0.
-    assert(header->bit_depth % 8 == 0);
+    ASSERT(header->bit_depth % 8 == 0);
     uint32_t data_size =
         header->image_size
             ? header->image_size
@@ -163,7 +166,9 @@ static uint8_t *BMP_ReadData(const BmpHeader *header, FILE *bmp)
 
     // Read in the data.
     uint8_t *pixels = Malloc(data_size);
-    fread(pixels, 1, data_size, bmp);
+    if (fread(pixels, 1, data_size, bmp) != data_size) {
+        Error_Raise(FATAL, ERR_IO, "unable to read bitmap data");
+    }
     return pixels;
 }
 
@@ -213,7 +218,7 @@ GLuint GL_LoadTexture(const char *bmp_path)
         // Format-specific processing.
         switch (BMP_GetPixelLayout(&header)) {
             case BMP_PIXEL_RGBA: {
-                assert(header.bit_depth == 32);
+                ASSERT(header.bit_depth == 32);
                 glTexImage2D(
                     GL_TEXTURE_2D,
                     0,

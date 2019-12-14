@@ -350,6 +350,21 @@ void Console_Init(Console *console, GLFWwindow *window,
 void Console_Render(const Console *console);
 
 /**
+ * \brief Execute commands in a file using the given console.
+ *
+ * \param script_path   Name of the file containing the script to run.
+ * \param echo          Enable printing of executed commands to the console.
+ *
+ * Each line in `script_path` is treated as a command. Empty lines and lines
+ * starting with '#' are ignored. The rest of the lines are processed as if they
+ * had been entered by the user into the console.
+ *
+ * If `script_path` does not exist, or otherwise cannot be opened, an error is
+ * printed to the console and no commands are processed.
+ */
+void Console_RunScript(Console *console, const char *script_path, bool echo);
+
+/**
  * \defgroup Console_Programming Programming a `Console`
  *
  * Console's are programmed using an internal DSL that allows the programmer to

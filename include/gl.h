@@ -16,6 +16,7 @@ typedef enum {
     VERTEX_ATTRIB_COLOR = 1,
     VERTEX_ATTRIB_TEXTURE_UV = 2,
     VERTEX_ATTRIB_CURSOR = 3,
+    VERTEX_ATTRIB_NORMAL = 4,
 } VertexAttribute;
 
 /**

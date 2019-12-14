@@ -1,5 +1,3 @@
-#include <assert.h>
-
 #include "errors.h"
 #include "text.h"
 
@@ -10,8 +8,8 @@ static char TextInput_RelativeChar(TextInput *text_input, int16_t offset)
     uint8_t x = TextField_GetCursor((TextField *)text_input);
     uint8_t prompt_len = strlen(text_input->prompt);
 
-    assert((int16_t)x + offset >= (int16_t)prompt_len);
-    assert((int16_t)x + offset < (int16_t)prompt_len + text_input->num_buffered);
+    ASSERT((int16_t)x + offset >= (int16_t)prompt_len);
+    ASSERT((int16_t)x + offset < (int16_t)prompt_len + text_input->num_buffered);
     return text_input->buffer[x + offset - prompt_len];
 }
 
@@ -35,9 +33,9 @@ static void TextInput_Delete(TextInput *text_input)
         return;
     }
 
-    assert(text_input->num_buffered <= w);
-    assert(x < w);
-    assert(x >= prompt_len);
+    ASSERT(text_input->num_buffered <= w);
+    ASSERT(x < w);
+    ASSERT(x >= prompt_len);
 
     char *c = &text_input->buffer[x - prompt_len];
         // Get a pointer into the input buffer where we're going to be deleting.
@@ -90,7 +88,7 @@ static void TextInput_HandleKey(
 
     // Get the active text input from GLFW.
     TextInput *text_input = glfwGetWindowUserPointer(window);
-    assert(text_input != NULL);
+    ASSERT(text_input != NULL);
     uint8_t prompt_len = strlen(text_input->prompt);
 
     trace("Text input %#lx got key event %s %#x\n",
@@ -202,7 +200,7 @@ static void TextInput_HandleCharacter(GLFWwindow *window, uint32_t key)
 {
     // Get the active text input from GLFW.
     TextInput *text_input = glfwGetWindowUserPointer(window);
-    assert(text_input != NULL);
+    ASSERT(text_input != NULL);
     uint8_t prompt_len = strlen(text_input->prompt);
 
     if (!text_input->focused) {
