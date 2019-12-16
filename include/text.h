@@ -45,6 +45,7 @@
 
 #include "matrix.h"
 #include "pp.h"
+#include "view.h"
 
 /**
  * \defgroup TextField TextField: Output-only text rendering
@@ -52,6 +53,8 @@
  */
 
 typedef struct {
+    View view;
+
     uint16_t x;         // Horizontal position of the top left corner of the
                         // component.
     uint16_t y;         // Vertical position of the top left corner of the
@@ -97,10 +100,17 @@ typedef struct {
 } TextField;
 
 /**
- * \brief Initialize a new `TextField`.
+ * \brief Allocate and initialize a new `TextField`.
  *
- * \param text_field The object to initialize.
- * \param window     The window where the text field will be displayed.
+ * \param size       The size of the object to create. If this constructor is
+ *                   being used to create the TextField portion of a derived
+ *                   class (e.g. TextInput or Console), this should be the size
+ *                   of that object (e.g. `sizeof(TextInput)` or
+ *                   `sizeof(Console)`). Otherwise, this should be
+ *                   `sizeof(TextField)`.
+ * \param manager    The manager for the  window where the text field will be
+ *                   displayed.
+ * \param parent     Parent view which will contain the text field.
  * \param x          The distance in pixels from the left edge of the window to
  *                   the top-left corner of the text field.
  * \param y          The distance in pixels from the bottom edge of the window
@@ -108,8 +118,14 @@ typedef struct {
  * \param width      The number of columns in the text field.
  * \param height     The number of rows.
  * \param font_size  The height of a character in pixels.
+ *
+ * The text field is created unfocused. If it should be focused (often desired
+ * for text inputs) it may be explicitly focused after creation by calling
+ * `View_Focus`.
+ *
+ * \pre `size >= sizeof(TextField)`
  */
-void TextField_Init(TextField *text_field, GLFWwindow *window,
+TextField *TextField_New(size_t size, ViewManager *manager, View *parent,
     uint16_t x, uint16_t y, uint8_t width, uint8_t height, uint8_t font_size);
 
 /**
@@ -133,11 +149,6 @@ void TextField_SetForegroundColor(TextField *text_field, const vec4 *color);
  * well as the characters in selected cells.
  */
 void TextField_SetBackgroundColor(TextField *text_field, const vec4 *color);
-
-/**
- * \brief Draw a text field on the OpenGL canvas.
- */
-void TextField_Render(const TextField *text_field);
 
 /**
  * \brief Enable rendering of the cursor position in the text field.
@@ -268,20 +279,21 @@ typedef struct TextInput TextInput;
 typedef void (*TextInputCallback)(TextInput *input, char *line);
 
 struct TextInput {
-    TextField text_field;           // Inherits from `TextField`.
-    TextInputCallback handle_line;  // Action to take after receiving a line of
-                                    // input.
-    const char *prompt;             // Prompt to be displayed before each line.
-    char *buffer;                   // Input buffer.
-    uint8_t num_buffered;           // Number of valid characters in `buffer`.
-    bool focused;                   // Should this component handle keyboard
-                                    // input?
+    TextField text_field;           ///< Inherits from `TextField`.
+    TextInputCallback handle_line;  ///< Action to take after receiving a line
+                                    ///< of input.
+    View_DestroyFunction super_destroy;
+                                    ///< Destroy the `TextField` portion of this
+                                    ///< object.
+    const char *prompt;             ///< Prompt to be displayed before each line.
+    char *buffer;                   ///< Input buffer.
+    uint8_t num_buffered;           ///< Number of valid characters in `buffer`.
 };
 
 /**
  * \brief Initialize a new `TextInput`.
  *
- * Delegates to `TextField_Init()`.
+ * Delegates to `TextField_New()`.
  *
  * \param handle_line Callback which will be called after receiving a line of
  *                    input. The callback takes as arguments the `TextInput`
@@ -291,9 +303,12 @@ struct TextInput {
  *                    callback. However, the `TextInput` may reuse the buffer
  *                    modify its contents later, so if the callback wishes to
  *                    maintain the processed line, it should allocate a copy.
+ *
+ * \pre `size >= sizeof(TextInput)`
  */
-void TextInput_Init(TextInput *text_input, GLFWwindow *window,
-    uint16_t x, uint16_t y, uint8_t width, uint8_t height, uint8_t font_size,
+TextInput *TextInput_New(
+    size_t size, ViewManager *manager, View *parent, uint16_t x, uint16_t y,
+    uint8_t width, uint8_t height, uint8_t font_size,
     TextInputCallback handle_line);
 
 /**
@@ -305,11 +320,6 @@ void TextInput_Init(TextInput *text_input, GLFWwindow *window,
  * `prompt` points to a statically allocated, constant, null-terminated string.
  */
 void TextInput_SetPrompt(TextInput *text_input, const char *prompt);
-
-/**
- * \brief Draw a `TextInput` on the OpenGL canvas.
- */
-void TextInput_Render(const TextInput *text_input);
 
 /**
  * @}
@@ -327,9 +337,9 @@ typedef struct Console {
 } Console;
 
 /**
- * \brief Initialize a new `Console`.
+ * \brief Allocate and initialize a new `Console`.
  *
- * Delegates to `TextInput_Init()`.
+ * Delegates to `TextInput_New()`.
  *
  * \param program The program to use to interpret command line intput.
  * \param state   State to pass to each command invocation. Must point to an
@@ -340,14 +350,10 @@ typedef struct Console {
  * `program` must be the name of a program specified via `PROGRAM_INFO` and
  * declared with `DECLARE_PROGRAM`.
  */
-void Console_Init(Console *console, GLFWwindow *window,
-    uint16_t x, uint16_t y, uint8_t width, uint8_t height, uint8_t font_size,
+Console *Console_New(
+    ViewManager *manager, View *parent, uint16_t x, uint16_t y,
+    uint8_t width, uint8_t height, uint8_t font_size,
     const Command *program, void *state);
-
-/**
- * \brief Draw a `Console` to the OpenGL canvas.
- */
-void Console_Render(const Console *console);
 
 /**
  * \brief Execute commands in a file using the given console.
@@ -402,9 +408,9 @@ void Console_RunScript(Console *console, const char *script_path, bool echo);
  *  * PROG_STATE_NAME [default: state]
  *      the name by which program commands can refer to the global state.
  *
- * After defining `PROGRAM_INFO`, the programmer may begin to provide code to handle each
- * leaf command via `DECLARE_RUNNABLE()`. They can register existing commands
- * (leaf or otherwise) as sub-commands of a new base command using
+ * After defining `PROGRAM_INFO`, the programmer may begin to provide code to
+ * handle each leaf command via `DECLARE_RUNNABLE()`. They can register existing
+ * commands (leaf or otherwise) as sub-commands of a new base command using
  * `DECLARE_SUB_COMMANDS()`. Leaf commands can also be used themselves as base
  * commands. Finally, `DECLARE_PROGRAM()` can be used to list the top-level
  * commands which will make up a program.

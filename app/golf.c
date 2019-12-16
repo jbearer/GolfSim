@@ -11,7 +11,7 @@
 #include "clock.h"
 #include "errors.h"
 #include "terrain.h"
-#include "view.h"
+#include "terrain_view.h"
 
 static const int POLL_KEYS[] = {
     'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
@@ -124,6 +124,9 @@ int main(int argc, char *const *argv)
     }
     glfwMakeContextCurrent(window);
 
+    ViewManager manager;
+    ViewManager_Init(&manager, window);
+
     // Initialize GLEW
     if (glewInit() != GLEW_OK) {
         fprintf(stderr, "Failed to initialize GLEW\n");
@@ -133,7 +136,7 @@ int main(int argc, char *const *argv)
     // Initialize game objects
     Terrain terrain;
     Terrain_Init(&terrain, 50, 50, 10);
-    View *view = View_New(window, &terrain);
+    ViewManager_Focus(&manager, (View *)TerrainView_New(&manager, &terrain));
 
     // Enable depth testing.
     glEnable(GL_DEPTH_TEST);
@@ -146,32 +149,16 @@ int main(int argc, char *const *argv)
         // with intensity given by the source alpha channel, and take the
         // destination color with the remaining intensity (1 - source alpha).
 
-    uint64_t curr_time = Clock_GetTimeMS();
-    uint64_t last_time = curr_time;
-
     // Main loop
     while (!glfwWindowShouldClose(window)) {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-        curr_time = Clock_GetTimeMS();
-        ASSERT(curr_time >= last_time);
-
-        if(curr_time - last_time < 10) {
-            // We're running more than 100 frames per second, which is
-            // pointless. Throttle back a little bit.
-            Clock_SleepMS(10);
-            curr_time = Clock_GetTimeMS();
-        }
-
-
-        View_Render(view, curr_time - last_time);
-        last_time = curr_time;
-
-        glfwSwapBuffers(window);
+        ViewManager_Render(&manager);
         glfwPollEvents();
     }
 
     glfwTerminate();
+    ViewManager_Destroy(&manager);
+    Terrain_Destroy(&terrain);
     return 0;
 
 ERR_GLEW_INIT:

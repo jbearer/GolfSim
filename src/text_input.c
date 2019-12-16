@@ -81,37 +81,20 @@ static void TextInput_Backspace(TextInput *text_input)
 // Handle a key event. This includes handling special control characters, as
 // well as general ASCII input and line processing.
 static void TextInput_HandleKey(
-    GLFWwindow *window, int key, int scancode, int action, int mods)
+    View *view, int key, KeyAction action, ModifierKey mods)
 {
-    (void)scancode;
-    (void)mods;
-
-    // Get the active text input from GLFW.
-    TextInput *text_input = glfwGetWindowUserPointer(window);
-    ASSERT(text_input != NULL);
+    TextInput *text_input = (TextInput *)view;
     uint8_t prompt_len = strlen(text_input->prompt);
 
     trace("Text input %#lx got key event %s %#x\n",
         (unsigned long)text_input,
-        action == GLFW_PRESS  ? "PRESS" :
-        action == GLFW_REPEAT ? "REPEAT" :
-        action == GLFW_RELEASE ? "RELEASE" :
-                                 "UNKNOWN",
+        action == KEY_PRESS   ? "PRESS" :
+        action == KEY_REPEAT  ? "REPEAT" :
+        action == KEY_RELEASE ? "RELEASE" :
+                                "UNKNOWN",
         key);
 
-    if (action == GLFW_RELEASE) {
-        return;
-    }
-
-    if (key == GLFW_KEY_P && (mods & GLFW_MOD_CONTROL) && (mods & GLFW_MOD_SHIFT)) {
-        // Ctrl+Shift+P toggles focus of the input.
-        text_input->focused = !text_input->focused;
-        return;
-    }
-
-    if (!text_input->focused) {
-        // Aside from the take-focus command, unfocused windows do not handle
-        // keyboard input.
+    if (action == KEY_RELEASE) {
         return;
     }
 
@@ -120,7 +103,7 @@ static void TextInput_HandleKey(
             do {
                 TextInput_Backspace(text_input);
             } while (
-                (mods & GLFW_MOD_CONTROL) &&
+                (mods & MOD_CONTROL) &&
                     // If control is pressed, keep backspacing until...
                 TextField_GetCursor((TextField *)text_input) > prompt_len &&
                     // ...we hit the beginning of the line, or...
@@ -132,7 +115,7 @@ static void TextInput_HandleKey(
             do {
                 TextInput_Delete(text_input);
             } while (
-                (mods & GLFW_MOD_CONTROL) &&
+                (mods & MOD_CONTROL) &&
                     // If control is pressed, keep deleting until...
                 TextField_GetCursor((TextField *)text_input)
                     < prompt_len + text_input->num_buffered &&
@@ -165,7 +148,7 @@ static void TextInput_HandleKey(
             do {
                 TextField_MoveCursor((TextField *)text_input, -1);
             } while (
-                (mods & GLFW_MOD_CONTROL) &&
+                (mods & MOD_CONTROL) &&
                     // If control is pressed, keep moving until...
                 TextField_GetCursor((TextField *)text_input) > prompt_len &&
                     // ...we hit the beginning of the line, or...
@@ -177,7 +160,7 @@ static void TextInput_HandleKey(
             do {
                 TextField_MoveCursor((TextField *)text_input, 1);
             } while (
-                (mods & GLFW_MOD_CONTROL) &&
+                (mods & MOD_CONTROL) &&
                     // If control is pressed, keep moving until...
                 TextField_GetCursor((TextField *)text_input)
                     < prompt_len + text_input->num_buffered &&
@@ -187,8 +170,8 @@ static void TextInput_HandleKey(
             );
             break;
         case GLFW_KEY_ESCAPE:
-            text_input->focused = false;
-            break;
+            View_Close((View *)text_input);
+            return;
         default:
             break;
     }
@@ -196,16 +179,10 @@ static void TextInput_HandleKey(
     TextField_Flush((TextField *)text_input);
 }
 
-static void TextInput_HandleCharacter(GLFWwindow *window, uint32_t key)
+static void TextInput_HandleCharacter(View *view, uint32_t key)
 {
-    // Get the active text input from GLFW.
-    TextInput *text_input = glfwGetWindowUserPointer(window);
-    ASSERT(text_input != NULL);
+    TextInput *text_input = (TextInput *)view;
     uint8_t prompt_len = strlen(text_input->prompt);
-
-    if (!text_input->focused) {
-        return;
-    }
 
     trace("Text input %#lx got character input %#x\n",
         (unsigned long)text_input, (unsigned)key);
@@ -238,33 +215,36 @@ static void TextInput_HandleCharacter(GLFWwindow *window, uint32_t key)
     TextField_Flush((TextField *)text_input);
 }
 
-void TextInput_Init(TextInput *text_input, GLFWwindow *window,
-    uint16_t x, uint16_t y, uint8_t width, uint8_t height, uint8_t font_size,
+static void TextInput_Destroy(View *view)
+{
+    TextInput *text_input = (TextInput *)view;
+    free(text_input->buffer);
+    text_input->super_destroy((View *)text_input);
+}
+
+TextInput *TextInput_New(
+    size_t size, ViewManager *manager, View *parent, uint16_t x, uint16_t y,
+    uint8_t width, uint8_t height, uint8_t font_size,
     TextInputCallback handle_line)
 {
-    TextField_Init((TextField *)text_input,
-        window, x, y, width, height, font_size);
+    ASSERT(size >= sizeof(TextInput));
+    TextInput *text_input = (TextInput *)TextField_New(
+        size, manager, parent, x, y, width, height, font_size);
     TextField_ShowCursor((TextField *)text_input);
     text_input->handle_line = handle_line;
     text_input->buffer = Malloc(width);
     text_input->prompt = "";
     text_input->num_buffered = 0;
-    text_input->focused = false;
 
-    // Set up window callbacks so we can respond to keyboard input. This makes
-    // this text input take complete control of the keyboard, which means we can
-    // only have one text input active at a time. For now, this is fine; we only
-    // need the console. When the time comes to have multiple GUI components and
-    // complex logic to determine which is focused, we will need to add some
-    // kind of virtualization layer to own the keyboard and dispatch events to
-    // the appropriate component.
-    glfwSetWindowUserPointer(window, text_input);
-        // Store a pointer to this input in the window's user pointer, so we can
-        // access our state in the even callbacks.
-    glfwSetCharCallback(window, TextInput_HandleCharacter);
-        // Handle unicode input stream.
-    glfwSetKeyCallback(window, TextInput_HandleKey);
-        // Handle non-text keyboard events (backspace, arrow keys, etc.).
+    // Set up a destructor to free the input buffer when the view is closed.
+    text_input->super_destroy = View_SetDestroyCallback(
+        (View *)text_input, TextInput_Destroy);
+
+    // Set up window callbacks so we can respond to keyboard input.
+    View_SetKeyCallback((View *)text_input, TextInput_HandleKey);
+    View_SetCharacterCallback((View *)text_input, TextInput_HandleCharacter);
+
+    return text_input;
 }
 
 void TextInput_SetPrompt(TextInput *text_input, const char *prompt)
@@ -273,11 +253,4 @@ void TextInput_SetPrompt(TextInput *text_input, const char *prompt)
     TextField_PutString((TextField *)text_input, prompt);
     TextField_Flush((TextField *)text_input);
         // We have to flush, since the prompt might not end in a newline.
-}
-
-void TextInput_Render(const TextInput *text_input)
-{
-    if (text_input->focused) {
-        TextField_Render((TextField *)text_input);
-    }
 }

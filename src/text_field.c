@@ -122,12 +122,47 @@ static char *TextField_CharAt(TextField *text_field, uint8_t row, uint8_t col)
     return &text_field->buffer[text_field->width*row + col];
 }
 
-void TextField_Init(
-    TextField *text_field, GLFWwindow *window,
+static void TextField_Render(View *view_base, uint32_t dt)
+{
+    (void)dt;
+    TextField *text_field = (TextField *)view_base;
+
+    // Load the font texture
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, text_field->font_texture);
+    glUniform1i(text_field->font_sampler, 0);
+
+    glUseProgram(text_field->shaders);
+    glUniformMatrix3fv(
+        text_field->mvp, 1, GL_TRUE, mat3_ConstBuffer(&text_field->transform));
+    glUniform4fv(
+        text_field->shader_fg_color, 1, vec4_ConstBuffer(&text_field->fg_color));
+    glUniform4fv(
+        text_field->shader_bg_color, 1, vec4_ConstBuffer(&text_field->bg_color));
+
+    glBindVertexArray(text_field->vao);
+    {
+        glDrawArrays(GL_TRIANGLES, 0, 6*text_field->width*text_field->height);
+    }
+    glBindVertexArray(0);
+}
+
+static void TextField_Destroy(View *view_base)
+{
+    TextField *text_field = (TextField *)view_base;
+    free(text_field->buffer);
+}
+
+TextField *TextField_New(
+    size_t size, ViewManager *manager, View *parent,
     uint16_t x, uint16_t y,
     uint8_t width, uint8_t height,
     uint8_t font_size)
 {
+    ASSERT(size >= sizeof(TextField));
+    TextField *text_field = (TextField *)View_New(size, manager, parent);
+    View_SetRenderCallback((View *)text_field, &TextField_Render);
+
     // Location and size fields.
     text_field->x = x;
     text_field->y = y;
@@ -172,8 +207,8 @@ void TextField_Init(
     // normalize x- and y-coordinates to the range [0, 2], and then translating
     // by (-1, -1) to move the origin to (-1, -1), where it will be rendered in
     // the bottom left corner of the screen, like we want.
-    int window_width, window_height;
-    glfwGetWindowSize(window, &window_width, &window_height);
+    uint32_t window_width, window_height;
+    View_GetWindowSize((View *)text_field, &window_width, &window_height);
     mat3_Copy(&text_field->transform, &I3);
         // Initialize to the identity so we can layer transformations on.
     mat3 m;
@@ -201,7 +236,7 @@ void TextField_Init(
     // dark gray color.
     vec4 color = { 1, 1, 1, 1};
     TextField_SetForegroundColor(text_field, &color);
-    color = (vec4) { 1, 1, 1, 0.2 };
+    color = (vec4) { 0, 0, 0, 0.4 };
     TextField_SetBackgroundColor(text_field, &color);
 
     // Create vertex buffers.
@@ -276,8 +311,14 @@ void TextField_Init(
     text_field->buffer = Malloc(text_field->width*text_field->height);
     memset(text_field->buffer, ' ', text_field->width*text_field->height);
 
+    // All of our resources are allocated, set up a destroy function to release
+    // them when the view is closed.
+    View_SetDestroyCallback((View *)text_field, TextField_Destroy);
+
     // Initialize character vertex data.
     TextField_Flush(text_field);
+
+    return text_field;
 }
 
 void TextField_SetForegroundColor(TextField *text_field, const vec4 *color)
@@ -288,28 +329,6 @@ void TextField_SetForegroundColor(TextField *text_field, const vec4 *color)
 void TextField_SetBackgroundColor(TextField *text_field, const vec4 *color)
 {
     text_field->bg_color = *color;
-}
-
-void TextField_Render(const TextField *text_field)
-{
-    // Load the font texture
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, text_field->font_texture);
-    glUniform1i(text_field->font_sampler, 0);
-
-    glUseProgram(text_field->shaders);
-    glUniformMatrix3fv(
-        text_field->mvp, 1, GL_TRUE, mat3_ConstBuffer(&text_field->transform));
-    glUniform4fv(
-        text_field->shader_fg_color, 1, vec4_ConstBuffer(&text_field->fg_color));
-    glUniform4fv(
-        text_field->shader_bg_color, 1, vec4_ConstBuffer(&text_field->bg_color));
-
-    glBindVertexArray(text_field->vao);
-    {
-        glDrawArrays(GL_TRIANGLES, 0, 6*text_field->width*text_field->height);
-    }
-    glBindVertexArray(0);
 }
 
 static void TextField_Scroll(TextField *text_field)

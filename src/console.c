@@ -242,12 +242,18 @@ static void Console_HandleLine(TextInput *text_input, char *line)
     command->impl.run(console, console->state, argc, argv);
 }
 
-void Console_Init(Console *console, GLFWwindow *window,
-    uint16_t x, uint16_t y, uint8_t width, uint8_t height, uint8_t font_size,
-    const Command *program, void *state)
+Console *Console_New(
+    ViewManager *manager, View *parent,
+    uint16_t x, uint16_t y,
+    uint8_t width, uint8_t height,
+    uint8_t font_size, const Command *program, void *state)
 {
-    TextInput_Init((TextInput *)console, window,
-        x, y, width, height, font_size, Console_HandleLine);
+    Console *console = (Console *)TextInput_New(
+        sizeof(Console), manager, parent,
+        x, y,
+        width, height, font_size,
+        Console_HandleLine
+    );
     console->program = program;
     console->state = state;
 
@@ -258,11 +264,8 @@ void Console_Init(Console *console, GLFWwindow *window,
 
     // Print the prompt.
     TextInput_SetPrompt((TextInput *)console, "$ ");
-}
 
-void Console_Render(const Console *console)
-{
-    TextInput_Render((const TextInput *)console);
+    return console;
 }
 
 static char *Console_StripWhitespace(char *str)

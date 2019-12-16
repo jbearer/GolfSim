@@ -170,6 +170,15 @@ void Terrain_Init(Terrain *terrain,
     uint16_t width, uint16_t height, uint8_t xy_resolution);
 
 /**
+ * \brief Release resources acquired in `Terrain_Init`.
+ *
+ * After this function returns, the `Terrain` object pointed to by `terrain` is
+ * no longer valid, and should not be used again, unless it is reinitialized by
+ * another call to `Terrain_Init`.
+ */
+void Terrain_Destroy(Terrain *terrain);
+
+/**
  * \brief Raise or lower the z-coordinate of a face.
  *
  * \param row   The row of the face on which to operate.

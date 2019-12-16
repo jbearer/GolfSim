@@ -31,6 +31,11 @@ void Terrain_Init(Terrain *terrain,
     }
 }
 
+void Terrain_Destroy(Terrain *terrain)
+{
+    free(terrain->faces);
+}
+
 static void Face_RaiseVertex(
     Terrain *terrain, uint16_t row, uint16_t col, uint8_t v, int16_t delta)
 {
