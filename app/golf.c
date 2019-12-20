@@ -112,6 +112,14 @@ int main(int argc, char *const *argv)
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
+        // Setting resizable to false causes tiling window managers (e.g. i3) to
+        // make it a floating window. This is not ideal; I would rather just let
+        // it tile and not require it to be a certain size. However, I haven't
+        // found a way to tell GLFW that we don't care about the window size,
+        // and specifying the size as anything causes GLFW to incorrectly make
+        // the OpenGL client area that size, even if the window manager tiles
+        // the window to some other size.
 
     GLFWmonitor *monitor =
         args.windowed ? NULL
@@ -136,7 +144,7 @@ int main(int argc, char *const *argv)
     // Initialize game objects
     Terrain terrain;
     Terrain_Init(&terrain, 50, 50, 10);
-    ViewManager_Focus(&manager, (View *)TerrainView_New(&manager, &terrain));
+    View_Focus((View *)TerrainView_New(&manager, &terrain));
 
     // Enable depth testing.
     glEnable(GL_DEPTH_TEST);

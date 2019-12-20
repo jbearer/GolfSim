@@ -187,6 +187,146 @@ void mat4_Apply(
     }
 }
 
+void mat4_ApplyInPlace(const mat4 * restrict m, vec4 * restrict v)
+{
+    vec4 out;
+    mat4_Apply(m, v, &out);
+    *v = out;
+}
+
+// Elementary row operation #1: swap the rows with index `r1` and `r2`.
+static void mat4_SwapRows(mat4 *m, uint8_t r1, uint8_t r2) {
+    for (uint8_t col = 0; col < 4; ++col) {
+        float e1 = m->M[r1][col];
+        float e2 = m->M[r2][col];
+        m->M[r2][col] = e1;
+        m->M[r1][col] = e2;
+    }
+}
+
+// Elementary row operation #2: scale the row with index `row` by `scalar`.
+static void mat4_ScaleRow(mat4 *m, float scalar, uint8_t row) {
+    for (uint8_t col = 0; col < 4; ++col) {
+        m->M[row][col] *= scalar;
+    }
+}
+
+// Elementary row operation #3: Add scalar*m[dst_row] to m[src_row].
+static void mat4_ReduceRow(
+    mat4 *m, float scalar, uint8_t src_row, uint8_t dst_row)
+{
+    for (uint8_t col = 0; col < 4; ++col) {
+        m->M[dst_row][col] += scalar*m->M[src_row][col];
+    }
+}
+
+bool mat4_Invert(const mat4 * restrict in, mat4 * restrict out)
+{
+    // We will use Gauss-Jordan elimination to compute the inverse of `in`. This
+    // is not the most efficient algorithm for 4x4 matrices, but it is fast
+    // enough (for now, at least) and relatively straightforward.
+    //
+    // The procedure is fairly simple: we create an augmented matrix
+    // [ m | m_inv ] where `m` is initialized to `*in` and `m_inv` is
+    // initialized to the identity matrix. We incrementally apply the same
+    // sequence of elementary row operations to both matrices as we attempt to
+    // reduce `m` to the identity matrix.
+    //
+    // If we succeed in reducing `m` to the identity matrix, then at the end of
+    // the procedure, `m_inv` will contain the inverse of `*in`. If we fail, it
+    // is because `*in` is not invertible, and we return `false`.
+    mat4 m     = *in;
+    mat4 m_inv = I4;
+
+    // We will take the procedure one column at a time, starting from the left
+    // and working our way to the right. Each iteration of this loop will
+    // "finalize" a new column of the `m` (that is, make that column equal to
+    // the corresponding column in the identity matrix) without chaning the
+    // previously finalized columns. At the end of the loop (if we don't fail
+    // early) `m` will be equal to the identity matrix.
+    for (uint8_t col = 0; col < 4; ++col) {
+        // Loop invariant: For each 0 <= i < 4, for each 0 <= j < col, if
+        // `i == j` then m[i][j] == 1, else m[i][j] == 0.
+#ifndef NDEBUG
+        // Check invariant:
+        for (uint8_t i = 0; i < 4; ++i) {
+            for (uint8_t j = 0; j < col; ++j) {
+                if (i == j) {
+                    ASSERT(m.M[i][j] == 1);
+                } else {
+                    ASSERT(m.M[i][j] == 0);
+                }
+            }
+        }
+#endif
+
+        // Find a row with a non-zero coefficient in this column.
+        uint8_t row;
+        for (row = col; row < 4; ++row) {
+            // We start the search at `col`, because based on the loop invariant
+            // all rows less than `col` already have their leading coefficients
+            // fixed in earlier columns.
+            if (m.M[row][col] != 0) {
+                break;
+            }
+        }
+        if (row == 4) {
+            // All candidate rows had a zero in this column. This means that it
+            // is impossible to reduce this matrix to the identity, and
+            // therefore it is not invertible.
+            return false;
+        }
+
+        if (row > col) {
+            // To reestablish the loop invariant, we need the row with a leading
+            // coefficient in this column to be in position `col`. If it's not,
+            // we swap it with the row that is in `col`.
+            //
+            // Note that this swap cannot invalidate what we already know about
+            // previous columns, because `row > col` and `col >= col`, and so
+            // the loop invariant tells us that both rows `row` and `col` have
+            // all zero entries up to position `col`.
+            mat4_SwapRows(&m,     row, col);
+            mat4_SwapRows(&m_inv, row, col);
+        }
+
+        // Now we have a leading coefficient at `m[col][col]`, but we need that
+        // coefficient to be 1.
+        if (m.M[col][col] != 1) {
+            // Divide row `col` by the leading coefficient to ensure that
+            // coefficient is 1. Once again, this cannot affect earlier columns,
+            // because all of the entries in those columns in row `col` are 0.
+            float scalar = 1/m.M[col][col];
+            mat4_ScaleRow(&m,     scalar, col);
+            mat4_ScaleRow(&m_inv, scalar, col);
+        }
+
+        // Finally, to reestablish our invariant, we need all the entries in
+        // `col` in other rows to be zero.
+        for (uint8_t row = 0; row < 4; ++row) {
+            if (row != col && m.M[row][col] != 0) {
+                // `row` has a nonzero entry in `col`, which is not allowed.
+                // Since we know `m[col][col]` is 1, we can add
+                // `-m[row][col] * m[col]` to `m[row]`, ensuring that
+                // `m[row][col]` will be 0.
+                //
+                // Once again, we don't have to worry about breaking earlier
+                // columns, because `m[row]` has all zeros up to `col`, so we'll
+                // just be adding zeros in those positions.
+                float scalar = -m.M[row][col];
+                mat4_ReduceRow(&m,     scalar, col, row);
+                mat4_ReduceRow(&m_inv, scalar, col, row);
+            }
+        }
+    }
+
+    // The loop invariant, together with the fact that `col == 4`, gives us that
+    // `m` is now the identity matrix, and therefore `m_inv` is the inverse of
+    // the original `m`.
+    *out = m_inv;
+    return true;
+}
+
 #ifndef NDEBUG
 const char *mat4_String(mat4 *m)
 {

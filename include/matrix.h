@@ -8,6 +8,7 @@
 #define GOLF_MATRIX_H
 
 #include <math.h>
+#include <stdbool.h>
 #include <string.h>
 
 #ifndef M_PI
@@ -112,6 +113,27 @@ static const vec4 y4 = { 0, 1, 0, 0 };
     ///< The y axis, in homogeneous coordinates.
 static const vec4 z4 = { 0, 0, 1, 0 };
     ///< The z axis, in homogeneous coordinates.
+
+/**
+ * \brief Multiply a vector by a scalar.
+ */
+static inline void vec4_Scale(float scalar, const vec4 *in, vec4 *out)
+{
+    out->x = scalar*in->x;
+    out->y = scalar*in->y;
+    out->z = scalar*in->z;
+    out->w = scalar*in->w;
+}
+
+/**
+ * \brief Multiply a vector by a scalar, updating the original vector.
+ */
+static inline void vec4_ScaleInPlace(float scalar, vec4 *v)
+{
+    vec4 out;
+    vec4_Scale(scalar, v, &out);
+    *v = out;
+}
 
 /**
  * \brief Project a 4-dimensional vector into 3-space.
@@ -394,6 +416,21 @@ void mat4_RightComposeInPlace(mat4 * restrict dst, const mat4 * restrict src);
  */
 void mat4_Apply(
     const mat4 * restrict m, const vec4 * restrict v, vec4 * restrict out);
+
+/**
+ * \brief Apply an affine transformation to a vector, updating the vector.
+ */
+void mat4_ApplyInPlace(const mat4 * restrict m, vec4 * restrict v);
+
+/**
+ * \brief Store the inverse of `m` in `out`, if it exists.
+ *
+ * \return
+ *  `true`  if `m` is invertible and `*out` is the inverse of `*m`.
+ *  `false` if `m` is not invertible, in which case the contents of `*out` are
+ *   unspecified.
+ */
+bool mat4_Invert(const mat4 * restrict m, mat4 * restrict out);
 
 /**
  * \brief A contiguous array of floats containing the data in matrix `m`.

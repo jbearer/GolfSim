@@ -93,6 +93,13 @@ struct TerrainView {
         //
         // Right-multiply this matrix by a model matrix to map model coordinates
         // to screen coordinates.
+    mat4 view_projection_inv;
+        // Inverse of `view_projection`. Converts screen coordinates to world
+        // coordinates. This matrix must be updated whenever `view_projection`
+        // is updated.
+        //
+        // Left-multiply this matrix by the inverse of a model matrix to map
+        // screen coordinates to model coordinates.
 
     // Terrain GL objects
     bool show_terrain;
@@ -223,6 +230,11 @@ static void TerrainView_UpdateMVP(TerrainView *view)
     mat4_ComposeInPlace(&view->projection, &view->view_projection);
         // Apply the perspective projection, so `view_projection` now maps from
         // world space to screen space.
+
+    // Compute the inverse.
+    bool invertible = mat4_Invert(
+        &view->view_projection, &view->view_projection_inv);
+    ASSERT(invertible);
 
     // Send the MVP matrix to the shaders.
     glUseProgram(view->gl_terrain_shaders);
@@ -674,6 +686,76 @@ static void TerrainView_MoveCamera(TerrainView *view, float north, float east)
     TerrainView_UpdateMVP(view);
 }
 
+// Convert a vector in screen-space {x, y, depth} (where `x` and `y` are in
+// pixels and `depth` is the corresponding value from the depth buffer) to a
+// vector in world space.
+static void TerrainView_Unproject(
+    const TerrainView *view, const vec3 *screen, vec3 *world)
+{
+    uint32_t width, height;
+    View_GetWindowSize((View *)view, &width, &height);
+
+    // Convert to normalized device coordinates. We normalize `x` by the width
+    // of the window, and `y` by the height, and then scale those [0, 1] ranges
+    // to [-1, 1] (which is what OpenGL uses). `z` has already been normalized
+    // to [0, 1] by OpenGL, so all we have to do is scale that to [-1, 1]. We
+    // set the `w` coordinate to 1 in preparation for a transformation into a
+    // homogeneous coordinate space via the inverse MVP matrix.
+    vec4 p = { 2*screen->x/width - 1
+             , 2*screen->y/height - 1
+             , 2*screen->z - 1
+             , 1 };
+
+    // Invert the transformation we applied to our model before drawing it.
+    mat4_ApplyInPlace(&view->view_projection_inv, &p);
+
+    // The matrix transformation above leaves us in homogeneous coordinates. To
+    // get back to Cartesian coordinates, we divide by `w`.
+    vec4_ScaleInPlace(1/p.w, &p);
+
+    *world = (vec3){p.x, p.y, p.z};
+}
+
+static void TerrainView_HandleClick(
+    View *view_base, MouseButton button, MouseAction action, ModifierKey mods)
+{
+    (void)button;
+    (void)mods;
+
+    if (action == MOUSE_RELEASE) {
+        return;
+    }
+
+    TerrainView *view = (TerrainView *)view_base;
+
+    int32_t x, y;
+    View_GetCursorPos((View *)view, &x, &y);
+
+    GLfloat z;
+    glReadPixels(x, y, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &z);
+
+    vec3 p = {(float)x + 0.5, (float)y + 0.5, z};
+        // We offset `x` and `y` by 0.5, because the integer point (x, y) is the
+        // location of the bottom left corner of the pixel, but we really want
+        // the point at the center of the pixel.
+
+    trace("handling %s %s at {%.2f, %.2f, %.2f}\n",
+        button == MOUSE_BUTTON_LEFT   ? "left"   :
+        button == MOUSE_BUTTON_RIGHT  ? "right"  :
+        button == MOUSE_BUTTON_MIDDLE ? "middle" :
+                                        "unknown",
+        action == MOUSE_PRESS ? "click" :
+        action == MOUSE_DRAG  ? "drag"  :
+                                "unknown",
+        p.x, p.y, p.z
+    );
+
+    vec3 world;
+    TerrainView_Unproject(view, &p, &world);
+    trace("{%.2f, %.2f, %.2f} in screen space is {%.2f, %.2f, %.2f} in world space\n",
+        p.x, p.y, p.z, world.x, world.y, world.z);
+}
+
 static void TerrainView_Animate(TerrainView *view, uint32_t dt)
 {
 #ifndef NDEBUG
@@ -712,12 +794,12 @@ static void TerrainView_Animate(TerrainView *view, uint32_t dt)
         east = delta;
     }
 
-    if (y <= 0) {
-        // Top edge (glfwGetCursorPos gives you the position relative to the top
-        // left, so y == 0 is the top edge and y == height is the bottom edge).
+    if (y >= (int32_t)height - 1) {
+        // Top edge.
         north = delta;
-    } else if (y >= (int32_t)height - 1) {
-        // Bottom edge.
+    } else if (y <= 0) {
+        // (View_GetCursorPos gives you the position relative to the bottom
+        // left, so y == 0 is the top edge and y == height is the bottom edge).
         north = -delta;
     }
 
@@ -793,12 +875,12 @@ static void TerrainView_Render(View *view_base, uint32_t dt)
     }
 }
 
-
 TerrainView *TerrainView_New(ViewManager *manager, Terrain *terrain)
 {
     TerrainView *view = (TerrainView *)View_New(
         sizeof(TerrainView), manager, NULL);
     View_SetRenderCallback((View *)view, TerrainView_Render);
+    View_SetMouseButtonCallback((View *)view, TerrainView_HandleClick);
 
     view->terrain = terrain;
     view->show_terrain = true;
@@ -894,6 +976,10 @@ TerrainView *TerrainView_New(ViewManager *manager, Terrain *terrain)
     trace("    view_projection:\n"
           "%s\n",
           mat4_String(&view->view_projection)
+    );
+    trace("    view_projection_inv:\n"
+          "%s\n",
+          mat4_String(&view->view_projection_inv)
     );
 
     return view;

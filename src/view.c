@@ -151,7 +151,7 @@ static void ViewManager_KeyCallback(
             View_Close(view);
         } else if (view->console != NULL) {
             // `view` is not a console, but has one, so we show that.
-            ViewManager_Focus(view->manager, (View *)view->console);
+            View_Focus((View *)view->console);
         } else if (view->console_program != NULL) {
             // `view` does not have an active console, but it has a program to
             // run, so we create a console to run the new program.
@@ -169,7 +169,7 @@ static void ViewManager_KeyCallback(
                 view->console_state
             );
 
-            ViewManager_Focus(view->manager, (View *)view->console);
+            View_Focus((View *)view->console);
         } else {
             // `view` is not a console, so technically we should display it's
             // console as a sub-view. However, it hasn't given us a program to
@@ -454,10 +454,14 @@ void View_GetWindowSize(const View *view, uint32_t *width, uint32_t *height)
 
 void View_GetCursorPos(const View *view, int32_t *x, int32_t *y)
 {
+    uint32_t width, height;
+    View_GetWindowSize(view, &width, &height);
+
     double dx, dy;
     glfwGetCursorPos(view->manager->window, &dx, &dy);
     *x = floor(dx);
-    *y = floor(dy);
+    *y = height - floor(dy) - 1;
+        // Convert from top-left-relative to bottom-left-relative.
 }
 
 void View_Close(View *view)
