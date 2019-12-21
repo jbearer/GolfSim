@@ -2,16 +2,20 @@
 #include "terrain.h"
 
 const Material fairway = {
-    .color = { 0.2, 0.9, 0.25, 1.0 }
+    .name = "fairway",
+    .color = { 0.2, 0.9, 0.25, 1.0 },
 };
 const Material rough = {
-    .color = { 0.1, 0.25, 0.1, 1.0 }
+    .name = "rough",
+    .color = { 0.1, 0.25, 0.1, 1.0 },
 };
 const Material sand = {
-    .color = { 0.8, 0.8, 0.1, 1.0 }
+    .name = "sand",
+    .color = { 0.8, 0.8, 0.1, 1.0 },
 };
 const Material water = {
-    .color = { 0.1, 0.1, 0.7, 1.0 }
+    .name = "water",
+    .color = { 0.1, 0.1, 0.7, 1.0 },
 };
 
 void Terrain_Init(Terrain *terrain,

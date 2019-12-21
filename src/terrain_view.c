@@ -73,6 +73,20 @@ static void Axis_Render(const Axis *axis)
     glBindVertexArray(0);
 }
 
+typedef struct {
+    enum {
+        HUD_RAISE_FACE,
+        HUD_RAISE_VERTEX,
+        HUD_SET_MATERIAL,
+        HUD_NONE,
+    } selection;
+
+    struct {
+        const Material *material;
+            // Only valid if `selection == HUD_SET_MATERIAL`.
+    } data;
+} HUD;
+
 struct TerrainView {
     View view;
     Terrain *terrain;
@@ -80,6 +94,31 @@ struct TerrainView {
     float camera_x;
     float camera_y;
     uint16_t camera_zoom;
+    vec3 mouse_position;
+        // We cache the mouse position from the last time the terrain was
+        // rendered, including the z-value from the depth buffer right after
+        // drawing the terrain. This allows us to recover 3D world-space
+        // coordinates for the corresponding point on the terrain without ray-
+        // casting.
+        //
+        // It's important that we read the z-coordinate right after we draw the
+        // terrain, because objects drawn later (such as axes, or the console)
+        // might overwrite that pixel in the depth buffer.
+        //
+        // The point stored here is represented in normalized device
+        // coordinates:
+        //  * x ranges from -1 to 1, scaled for the width of the window.
+        //  * y ranges from -1 to 1, scaled for the height of the window.
+        //  * z ranges from -1 to 1, where -1 is the near clipping plane and 1
+        //    is the far one.
+        //
+        // Note that it is possible the mouse is in a location which does not
+        // correspond to any location in the terrain. This case can be
+        // distinguished because the z-coordinate of the point will be exactly 1
+        // (since a mouse position that misses the terrain will hit the far
+        // clipping plane).
+
+    HUD hud;
 
     mat4 projection;
         // Perspective projection matrix for the scene. Converts camera
@@ -686,36 +725,6 @@ static void TerrainView_MoveCamera(TerrainView *view, float north, float east)
     TerrainView_UpdateMVP(view);
 }
 
-// Convert a vector in screen-space {x, y, depth} (where `x` and `y` are in
-// pixels and `depth` is the corresponding value from the depth buffer) to a
-// vector in world space.
-static void TerrainView_Unproject(
-    const TerrainView *view, const vec3 *screen, vec3 *world)
-{
-    uint32_t width, height;
-    View_GetWindowSize((View *)view, &width, &height);
-
-    // Convert to normalized device coordinates. We normalize `x` by the width
-    // of the window, and `y` by the height, and then scale those [0, 1] ranges
-    // to [-1, 1] (which is what OpenGL uses). `z` has already been normalized
-    // to [0, 1] by OpenGL, so all we have to do is scale that to [-1, 1]. We
-    // set the `w` coordinate to 1 in preparation for a transformation into a
-    // homogeneous coordinate space via the inverse MVP matrix.
-    vec4 p = { 2*screen->x/width - 1
-             , 2*screen->y/height - 1
-             , 2*screen->z - 1
-             , 1 };
-
-    // Invert the transformation we applied to our model before drawing it.
-    mat4_ApplyInPlace(&view->view_projection_inv, &p);
-
-    // The matrix transformation above leaves us in homogeneous coordinates. To
-    // get back to Cartesian coordinates, we divide by `w`.
-    vec4_ScaleInPlace(1/p.w, &p);
-
-    *world = (vec3){p.x, p.y, p.z};
-}
-
 static void TerrainView_HandleClick(
     View *view_base, MouseButton button, MouseAction action, ModifierKey mods)
 {
@@ -728,17 +737,6 @@ static void TerrainView_HandleClick(
 
     TerrainView *view = (TerrainView *)view_base;
 
-    int32_t x, y;
-    View_GetCursorPos((View *)view, &x, &y);
-
-    GLfloat z;
-    glReadPixels(x, y, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &z);
-
-    vec3 p = {(float)x + 0.5, (float)y + 0.5, z};
-        // We offset `x` and `y` by 0.5, because the integer point (x, y) is the
-        // location of the bottom left corner of the pixel, but we really want
-        // the point at the center of the pixel.
-
     trace("handling %s %s at {%.2f, %.2f, %.2f}\n",
         button == MOUSE_BUTTON_LEFT   ? "left"   :
         button == MOUSE_BUTTON_RIGHT  ? "right"  :
@@ -747,13 +745,101 @@ static void TerrainView_HandleClick(
         action == MOUSE_PRESS ? "click" :
         action == MOUSE_DRAG  ? "drag"  :
                                 "unknown",
-        p.x, p.y, p.z
+        view->mouse_position.x, view->mouse_position.y, view->mouse_position.z
     );
 
-    vec3 world;
-    TerrainView_Unproject(view, &p, &world);
+    if (view->mouse_position.z == 1) {
+        // Click was not on the terrain, so we hit the back clipping plane.
+        return;
+    }
+
+    // Convert from normalized device coordinates to world coordinates by
+    // applying the inverse of the view-projection transformation.
+    vec4 p = { view->mouse_position.x
+             , view->mouse_position.y
+             , view->mouse_position.z
+             , 1 };
+    mat4_ApplyInPlace(&view->view_projection_inv, &p);
+
+    // The matrix transformation above leaves us in homogeneous coordinates. To
+    // get back to Cartesian coordinates, we divide by `w`.
+    vec4_ScaleInPlace(1/p.w, &p);
     trace("{%.2f, %.2f, %.2f} in screen space is {%.2f, %.2f, %.2f} in world space\n",
-        p.x, p.y, p.z, world.x, world.y, world.z);
+        view->mouse_position.x, view->mouse_position.y, view->mouse_position.z,
+        p.x, p.y, p.z);
+
+    // If we think we hit the terrain, we better have a point that corresponds
+    // to some face.
+    ASSERT(0 <= p.x && p.x <
+        Terrain_FaceWidth(view->terrain)*view->terrain->xy_resolution);
+    ASSERT(0 <= p.y && p.y <
+        Terrain_FaceHeight(view->terrain)*view->terrain->xy_resolution);
+
+    switch (view->hud.selection) {
+        case HUD_RAISE_FACE: {
+            if (action != MOUSE_PRESS) {
+                break;
+                    // Unlike some of the other tools, the raise/lower terrain
+                    // tools are not idempotent within a face, so we don't
+                    // activate them on a drag event.
+            }
+
+            // Find the coordinates of the face _containing_ the cursor.
+            uint16_t row = floor(p.y/view->terrain->xy_resolution);
+            uint16_t col = floor(p.x/view->terrain->xy_resolution);
+
+            // Raise one unit on a left click, lower one unit on a right click.
+            if (button == MOUSE_BUTTON_LEFT) {
+                Terrain_RaiseFace(view->terrain, row, col, 1);
+            } else if (button == MOUSE_BUTTON_RIGHT) {
+                Terrain_RaiseFace(view->terrain, row, col, -1);
+            }
+            TerrainView_UpdateFaceHeights(view);
+
+            break;
+        }
+
+        case HUD_RAISE_VERTEX: {
+            if (action != MOUSE_PRESS) {
+                break;
+            }
+
+            // Find the coordinates of the vertex _nearest_ the cursor.
+            uint16_t row = round(p.y/view->terrain->xy_resolution);
+            uint16_t col = round(p.x/view->terrain->xy_resolution);
+
+            // Raise one unit on a left click, lower one unit on a right click.
+            if (button == MOUSE_BUTTON_LEFT) {
+                Terrain_RaiseVertex(view->terrain, row, col, 1);
+            } else if (button == MOUSE_BUTTON_RIGHT) {
+                Terrain_RaiseVertex(view->terrain, row, col, -1);
+            }
+            TerrainView_UpdateFaceHeights(view);
+
+            break;
+        }
+
+        case HUD_SET_MATERIAL: {
+            // Find the face _containing_ the cursor.
+            uint16_t row = floor(p.y/view->terrain->xy_resolution);
+            uint16_t col = floor(p.x/view->terrain->xy_resolution);
+
+            if (button == MOUSE_BUTTON_LEFT) {
+                // The material to set is stored in the HUD's data field.
+                Terrain_GetFace(view->terrain, row, col)->material =
+                    view->hud.data.material;
+            } else {
+                // Reset the face to rough.
+                Terrain_GetFace(view->terrain, row, col)->material = &rough;
+            }
+            TerrainView_UpdateFaceColors(view);
+
+            break;
+        }
+
+        default:
+            break;
+    }
 }
 
 static void TerrainView_Animate(TerrainView *view, uint32_t dt)
@@ -855,6 +941,31 @@ static void TerrainView_Render(View *view_base, uint32_t dt)
         glBindVertexArray(0);
     }
 
+    // Cache the position of the mouse, including the z-coordinate from the
+    // depth buffer. We have to do this immediately after drawing the terrain,
+    // while the depth buffer values are guaranteed to correspond to the terrain
+    // and not some other model.
+    int32_t x, y;
+    uint32_t width, height;
+    GLfloat z;
+    View_GetWindowSize((View *)view, &width, &height);
+    View_GetCursorPos((View *)view, &x, &y);
+    glReadPixels(x, y, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &z);
+    view->mouse_position = (vec3){
+        2*((float)x + 0.5)/width - 1,
+            // We offset `x` by 0.5, because the integer point (x, y) is the
+            // location of the bottom left corner of the pixel, but we really
+            // want the point at the center of the pixel. Then we divide by
+            // width to normalize to [0, 1], and then 2x + 1 stretches that
+            // range to [-1, 1].
+        2*((float)y + 0.5)/height - 1,
+            // Same normalization as for `x`.
+        2*z - 1
+            // `z` is already normalized to [0, 1], so we don't have to adjust
+            // for the size of the window or anything. We just take 2z - 1 to
+            // scale this range to [-1, 1].
+    };
+
     if (view->show_terrain_mesh) {
         // Draw terrain mesh
         glUseProgram(view->gl_terrain_shaders);
@@ -889,6 +1000,8 @@ TerrainView *TerrainView_New(ViewManager *manager, Terrain *terrain)
     view->camera_x = 0;
     view->camera_y = 0;
     view->camera_zoom = 300;
+    view->mouse_position = (vec3){ 0, 0, 1 };
+    view->hud.selection = HUD_NONE;
 
 #ifndef NDEBUG
     memset(view->dts, 0, sizeof(view->dts));
@@ -1468,6 +1581,69 @@ DECLARE_SUB_COMMANDS(terrain, "terrain", "inspect and manipulate the terrain",
     &terrain_raise_vertex, &terrain_bulk_raise_vertex,
     &terrain_info);
 
-DECLARE_PROGRAM(&show, &hide, &window, &camera, &terrain);
+////////////////////////////////////////////////////////////////////////////////
+// HUD
+//
+
+DECLARE_RUNNABLE(hud_info, "info",
+    "get information about the state of the HUD menu")
+{
+    (void)argv;
+    (void)argc;
+
+    switch (view->hud.selection) {
+        case HUD_RAISE_FACE:
+            TextField_PutLine((TextField *)console, "Selection: raise-face");
+            break;
+        case HUD_RAISE_VERTEX:
+            TextField_PutLine((TextField *)console, "Selection: raise-vertex");
+            break;
+        case HUD_SET_MATERIAL:
+            TextField_PutLine((TextField *)console, "Selection: set");
+            TextField_Printf((TextField *)console, "Data: %s\n",
+                view->hud.data.material->name);
+            break;
+        case HUD_NONE:
+            TextField_PutLine((TextField *)console, "Selection: none");
+            break;
+        default:
+            ASSERT(false);
+    }
+}
+
+DECLARE_RUNNABLE(hud_select, "select", "select a tool from the HUD menu")
+{
+    if (argc == 0) {
+        view->hud.selection = HUD_NONE;
+        return;
+    }
+
+    if (strcmp("raise-face", argv[0]) == 0) {
+        view->hud.selection = HUD_RAISE_FACE;
+    } else if (strcmp("raise-vertex", argv[0]) == 0) {
+        view->hud.selection = HUD_RAISE_VERTEX;
+    } else if (strcmp("set", argv[0]) == 0) {
+        if (argc < 2) {
+            TextField_PutLine((TextField *)console,
+                "need to specify name of material to set");
+            return;
+        }
+        const Material *material = ParseMaterial(argv[1]);
+        if (material == NULL) {
+            TextField_PutLine((TextField *)console, "unrecognized material");
+            return;
+        }
+
+        view->hud.selection = HUD_SET_MATERIAL;
+        view->hud.data.material = material;
+    } else {
+        TextField_PutLine((TextField *)console, "unrecognized tool");
+    }
+}
+
+DECLARE_SUB_COMMANDS(hud, "hud", "inspect and modify the state of the HUD menu",
+    &hud_info, &hud_select);
+
+DECLARE_PROGRAM(&show, &hide, &window, &camera, &terrain, &hud);
 
 #undef PROGRAM_INFO

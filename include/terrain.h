@@ -14,6 +14,7 @@
 
 typedef struct {
     vec4 color;
+    const char *name;
 } Material;
 
 extern const Material fairway;
