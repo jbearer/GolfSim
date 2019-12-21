@@ -9,6 +9,7 @@
 
 #include <math.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <string.h>
 
 #ifndef M_PI
@@ -18,6 +19,26 @@
 #ifndef M_SQRT1_2
 #define M_SQRT1_2 0.70710678118654752440
 #endif
+
+static inline uint64_t UintMin(uint64_t x, uint64_t y)
+{
+    return x <= y ? x : y;
+}
+
+static inline uint64_t UintMax(uint64_t x, uint64_t y)
+{
+    return x >= y ? x : y;
+}
+
+static inline int64_t IntMin(int64_t x, int64_t y)
+{
+    return x <= y ? x : y;
+}
+
+static inline int64_t IntMax(int64_t x, int64_t y)
+{
+    return x >= y ? x : y;
+}
 
 typedef struct {
     float x;

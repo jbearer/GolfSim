@@ -188,12 +188,24 @@ void Terrain_Destroy(Terrain *terrain);
  *              specified face. A positive delta raises the face; a negative
  *              delta lowers it.
  *
- * Each vertex in the face is raised or lowered individually as if by
+ * If the face is currently level (all four vertices have the same height) each
+ * vertex in the face is raised or lowered individually as if by
  * `Terrain_RaiseVertex`. This means that the lower-bound behavior applied by
- * `Terrain_RaiseVertex` is applied to each vertex independently: if
- * `vertex + delta < 0` for any vertex, the height of that vertex will be set to
- * 0. If `vertex + delta >= 0` for any vertex, that vertex will be raised or
- * lowered the full amount, _even if_ some other vertex was truncated at 0.
+ * `Terrain_RaiseVertex` is applied to each vertex independently: if `vertex +
+ * delta < 0` for any vertex, the height of that vertex will be set to 0. If
+ * `vertex + delta >= 0` for any vertex, that vertex will be raised or lowered
+ * the full amount, _even if_ some other vertex was truncated at 0.
+ *
+ *
+ * ## Whole-face semantics
+ *
+ * If the face is not level, the extremal vertex (or vertices) is not affected
+ * by the change, until the face becomes level. For example, raising by `1` will
+ * have no affect on the highest vertex (or vertices). Lowering by `-1` will
+ * have no affecet on the lowest vertex. If the magnitude of `delta` is greater
+ * than `1`, and a smaller delta would cause the face to be level, the off-level
+ * vertices will be raised by a portion of `delta` until the face is level, and
+ * then all vertices will be raised by the remainder of delta.
  *
  * \pre
  * `row < Terrain_FaceHeight(terrain)`

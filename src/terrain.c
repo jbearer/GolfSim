@@ -97,11 +97,75 @@ void Terrain_RaiseVertex(
     }
 }
 
+// Raise a vertex as part of a "raise face" operation, implementing the tricky
+// parts of the "whole-face" semantics.
+//
+// `min` and `max` should be, respectively, the minimum and maximum heights of
+// the four vertices adjacent to the face at (row, col). `vertex` should be the
+// index of the vertex to raise (e.g. TOP_LEFT, BOTTOM_RIGHT, etc.).
+static void Terrain_RaiseFaceVertex(
+    Terrain *terrain,
+    uint16_t min, uint16_t max,
+    uint16_t row, uint16_t col, uint8_t vertex,
+    int16_t delta)
+{
+    ASSERT(min <= max);
+    ASSERT(row < Terrain_FaceHeight(terrain));
+    ASSERT(col < Terrain_FaceWidth(terrain));
+    ASSERT(vertex < 4);
+
+    Face *face = Terrain_GetFace(terrain, row, col);
+    uint16_t z = face->vertices[vertex];
+    ASSERT(min <= z && z <= max);
+
+    int16_t real_delta;
+    if (delta > 0) {
+        real_delta = IntMin(delta, max - z);
+            // We know for sure we will raise the vertex at least until it is
+            // level with the highest vertex.
+        real_delta += IntMax((delta - real_delta) - (z - min), 0);
+            // In addition, we will raise the vertex the remaining delta, except
+            // that we wait for the lowest vertex to "catch up", hence the
+            // difference of `z - min`.
+    } else {
+        real_delta = IntMax(delta, min - z);
+            // We know for sure we will lower the vertex at least until it is
+            // level with the lowest vertex.
+        real_delta += IntMin((delta - real_delta) - (z - max), 0);
+            // In addition, we will lower the vertex the remaining delta, except
+            // that we wait for the highest vertex to "catch up".
+    }
+
+
+    // (row, col) indexes the bottom left vertex of the face, so we may need to
+    // increment row and/or col to get to vertices on the top and/or right.
+    if (vertex == TOP_LEFT || vertex == TOP_RIGHT) {
+        row += 1;
+    }
+    if (vertex == TOP_RIGHT || vertex == BOTTOM_RIGHT) {
+        col += 1;
+    }
+
+    Terrain_RaiseVertex(terrain, row, col, real_delta);
+}
+
 void Terrain_RaiseFace(
     Terrain *terrain, uint16_t row, uint16_t col, int16_t delta)
 {
-    Terrain_RaiseVertex(terrain, row,   col,   delta);
-    Terrain_RaiseVertex(terrain, row+1, col,   delta);
-    Terrain_RaiseVertex(terrain, row+1, col+1, delta);
-    Terrain_RaiseVertex(terrain, row,   col+1, delta);
+    Face *face = Terrain_GetFace(terrain, row, col);
+
+    uint16_t min = UintMin(face->vertices[TOP_LEFT],
+                   UintMin(face->vertices[TOP_RIGHT],
+                   UintMin(face->vertices[BOTTOM_RIGHT],
+                           face->vertices[BOTTOM_LEFT])));
+
+    uint16_t max = UintMax(face->vertices[TOP_LEFT],
+                   UintMax(face->vertices[TOP_RIGHT],
+                   UintMax(face->vertices[BOTTOM_RIGHT],
+                           face->vertices[BOTTOM_LEFT])));
+
+    Terrain_RaiseFaceVertex(terrain, min, max, row, col, TOP_LEFT,     delta);
+    Terrain_RaiseFaceVertex(terrain, min, max, row, col, TOP_RIGHT,    delta);
+    Terrain_RaiseFaceVertex(terrain, min, max, row, col, BOTTOM_RIGHT, delta);
+    Terrain_RaiseFaceVertex(terrain, min, max, row, col, BOTTOM_LEFT,  delta);
 }
