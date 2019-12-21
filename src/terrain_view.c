@@ -20,6 +20,11 @@
     // to the terrain, which keeps the "apparent speed" of the pan relatively
     // constant.
 
+#define CAMERA_ZOOM_RATIO 1.1
+    // Ratio between two zoom levels which are separated by one click of the
+    // user's mouse wheel. For example, 1.1 means we zoom in 10% each time the
+    // user scrolls up.
+
 typedef struct {
     GLuint vao;
     GLuint positions;
@@ -842,6 +847,30 @@ static void TerrainView_HandleClick(
     }
 }
 
+static void TerrainView_HandleScroll(View *view_base, int32_t x, int32_t y)
+{
+    trace("got scroll event (%d, %d)\n", x, y);
+
+    TerrainView *view = (TerrainView *)view_base;
+
+    (void)x;
+        // Horizontal scrolling doesn't mean anything, at least for now.
+
+    if (y > 0) {
+        view->camera_zoom /= CAMERA_ZOOM_RATIO*y;
+        if (view->camera_zoom < 1.0/(CAMERA_ZOOM_RATIO - 1)) {
+            view->camera_zoom = 1.0/(CAMERA_ZOOM_RATIO - 1) + 1;
+                // If we zoom in too far, we start to lose precision, to the
+                // point where it becomes impossible to zoom out because
+                // `camera_zoom*CAMERA_ZOOM_RATIO == camera_zoom` in integer
+                // arithmetic.
+        }
+    } else if (y < 0) {
+        view->camera_zoom *= -CAMERA_ZOOM_RATIO*y;
+    }
+    TerrainView_UpdateMVP(view);
+}
+
 static void TerrainView_Animate(TerrainView *view, uint32_t dt)
 {
 #ifndef NDEBUG
@@ -992,6 +1021,7 @@ TerrainView *TerrainView_New(ViewManager *manager, Terrain *terrain)
         sizeof(TerrainView), manager, NULL);
     View_SetRenderCallback((View *)view, TerrainView_Render);
     View_SetMouseButtonCallback((View *)view, TerrainView_HandleClick);
+    View_SetScrollCallback((View *)view, TerrainView_HandleScroll);
 
     view->terrain = terrain;
     view->show_terrain = true;

@@ -312,6 +312,25 @@ static void ViewManager_CursorPositionCallback(
     }
 }
 
+static void ViewManager_ScrollCallback(GLFWwindow *window, double x, double y)
+{
+    // Get the manager from the window's user data.
+    ViewManager *manager = glfwGetWindowUserPointer(window);
+    ASSERT(manager != NULL);
+
+    // Find a view above the focused one with a handler for this event.
+    View *view = manager->focused;
+    while (view != NULL) {
+        if (view->scroll_callback) {
+            view->scroll_callback(view, floor(x), floor(y));
+            return;
+                // Return in case the handler closed `view`, making it invalid.
+        }
+
+        view = view->parent;
+    }
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // ViewManager API
 //
@@ -329,6 +348,7 @@ void ViewManager_Init(ViewManager *manager, GLFWwindow *window)
     glfwSetKeyCallback(window, ViewManager_KeyCallback);
     glfwSetMouseButtonCallback(window, ViewManager_MouseButtonCallback);
     glfwSetCursorPosCallback(window, ViewManager_CursorPositionCallback);
+    glfwSetScrollCallback(window, ViewManager_ScrollCallback);
 }
 
 void ViewManager_Destroy(ViewManager *manager)
@@ -413,6 +433,7 @@ View *View_New(size_t size, ViewManager *manager, View *parent)
     view->key_callback = NULL;
     view->character_callback = NULL;
     view->mouse_button_callback = NULL;
+    view->scroll_callback = NULL;
 
     // Insert into parent's list of children, if parent is specified. Otherwise,
     // insert into manager's list of top-level views.

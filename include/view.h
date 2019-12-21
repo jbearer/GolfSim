@@ -251,6 +251,17 @@ typedef void (*View_CharacterFunction)(struct View *, uint32_t codepoint);
 typedef void (*View_MouseButtonFunction)(
     struct View *, MouseButton button, MouseAction action, ModifierKey mods);
 
+/**
+ * \brief Callback used to dispatch 2-dimensional scroll events to a view.
+ *
+ * \param x     The distance to scroll in the `x` direction.
+ * \param y     The distance to scroll in the `y` direction.
+ *
+ * \note
+ *  The units of `x` and `y` are a little arbitrary. They correspond to "number
+ *  of clicks of the scroll wheel", and will almost always be -1, 0, or 1.
+ */
+typedef void (*View_ScrollFunction)(struct View *, int32_t x, int32_t y);
 
 /// @}
 
@@ -296,6 +307,7 @@ typedef struct View {
     View_KeyFunction key_callback;
     View_CharacterFunction character_callback;
     View_MouseButtonFunction mouse_button_callback;
+    View_ScrollFunction scroll_callback;
 } View;
 
 /**
@@ -358,6 +370,19 @@ static inline View_MouseButtonFunction View_SetMouseButtonCallback(
 {
     View_MouseButtonFunction old_fn = view->mouse_button_callback;
     view->mouse_button_callback = fn;
+    return old_fn;
+}
+
+/**
+ * \brief Set a callback to run when the view gets a scroll event.
+ *
+ * \return The old callback, if there was one, or `NULL`.
+ */
+static inline View_ScrollFunction View_SetScrollCallback(
+    View *view, View_ScrollFunction fn)
+{
+    View_ScrollFunction old_fn = view->scroll_callback;
+    view->scroll_callback = fn;
     return old_fn;
 }
 
