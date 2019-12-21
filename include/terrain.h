@@ -18,6 +18,8 @@ typedef struct {
 } Material;
 
 extern const Material fairway;
+extern const Material green;
+extern const Material tee;
 extern const Material rough;
 extern const Material sand;
 extern const Material water;

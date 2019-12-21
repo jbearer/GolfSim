@@ -1313,6 +1313,10 @@ static const Material *ParseMaterial(const char *name)
 {
     if (strcasecmp("fairway", name) == 0) {
         return &fairway;
+    } else if (strcasecmp("green", name) == 0) {
+        return &green;
+    } else if (strcasecmp("tee", name) == 0) {
+        return &tee;
     } else if (strcasecmp("rough", name) == 0) {
         return &rough;
     } else if (strcasecmp("sand", name) == 0) {

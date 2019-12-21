@@ -3,7 +3,15 @@
 
 const Material fairway = {
     .name = "fairway",
+    .color = { 0.35, 0.6, 0.2, 1.0 },
+};
+const Material green = {
+    .name = "green",
     .color = { 0.2, 0.9, 0.25, 1.0 },
+};
+const Material tee = {
+    .name = "tee",
+    .color = { 0.2, 0.4, 0.15, 1.0 },
 };
 const Material rough = {
     .name = "rough",
