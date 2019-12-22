@@ -143,7 +143,7 @@ int main(int argc, char *const *argv)
 
     // Initialize game objects
     Terrain terrain;
-    Terrain_Init(&terrain, 50, 50, 10);
+    Terrain_Init(&terrain, 100, 100, 10);
     View_Focus((View *)TerrainView_New(&manager, &terrain));
 
     // Enable depth testing.

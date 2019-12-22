@@ -122,6 +122,69 @@ static char *TextField_CharAt(TextField *text_field, uint8_t row, uint8_t col)
     return &text_field->buffer[text_field->width*row + col];
 }
 
+static void TextField_UpdateVertices(TextField *text_field)
+{
+    glBindVertexArray(text_field->vao);
+    {
+        glBindBuffer(GL_ARRAY_BUFFER, text_field->vertex_positions);
+        {
+            uint8_t char_height = text_field->font_size;
+            uint8_t char_width = FONT_ASPECT*char_height;
+
+            uint32_t num_vertices = 6*text_field->width*text_field->height;
+                // Each character slot is a quadrilateral, or two triangles, so
+                // requires 6 vertices.
+
+            vec2 *positions = Malloc(num_vertices*sizeof(vec2));
+
+            // Initialize positions
+            uint16_t i = 0;
+                // Offset of the current vertex in `positions`.
+            for (uint8_t row = 0; row < text_field->height; ++row) {
+                for (uint8_t col = 0; col < text_field->width; ++col) {
+                    // Coordinates of the top-left corner of this character.
+                    uint16_t x = text_field->x + col*char_width;
+                    uint16_t y = text_field->y - row*char_height;
+
+                    // Set up coordinates for the following two triangles:
+                    //
+                    //               (x, y)        (x + char_width, y)
+                    //                     A-----,B
+                    //                     | 1  / |
+                    //                     |  ,`  |
+                    //                     | /  2 |
+                    //                     C------D
+                    // (x, y - char_height)        (x + char_width, y - char_height)
+
+                    // Triangle 1: top left, ABC
+                    positions[i++] = (vec2){ x,             y };
+                    positions[i++] = (vec2){ x+char_width,  y };
+                    positions[i++] = (vec2){ x,             y-char_height };
+
+                    // Triangle 2: bottom right, DBC
+                    positions[i++] = (vec2){ x+char_width, y-char_height };
+                    positions[i++] = (vec2){ x+char_width, y };
+                    positions[i++] = (vec2){ x,            y-char_height };
+                }
+            }
+
+            glBufferData(
+                GL_ARRAY_BUFFER,
+                num_vertices*sizeof(vec2),
+                positions,
+                GL_STATIC_DRAW
+            );
+            glVertexAttribPointer(
+                VERTEX_ATTRIB_POSITION, 2, GL_FLOAT, GL_FALSE, 0, 0);
+            glEnableVertexAttribArray(VERTEX_ATTRIB_POSITION);
+
+            free(positions);
+        }
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+    glBindVertexArray(0);
+}
+
 static void TextField_Render(View *view_base, uint32_t dt)
 {
     (void)dt;
@@ -245,67 +308,8 @@ TextField *TextField_New(
     glGenBuffers(1, &text_field->vertex_uv);
     glGenBuffers(1, &text_field->vertex_cursor);
 
-    // Initialize the vertex position buffer. This never changes after
-    // initialization, so we do it here rather than in TextField_Flush.
-    glBindVertexArray(text_field->vao);
-    {
-        glBindBuffer(GL_ARRAY_BUFFER, text_field->vertex_positions);
-        {
-            uint8_t char_height = text_field->font_size;
-            uint8_t char_width = FONT_ASPECT*char_height;
-
-            uint32_t num_vertices = 6*text_field->width*text_field->height;
-                // Each character slot is a quadrilateral, or two triangles, so
-                // requires 6 vertices.
-
-            vec2 *positions = Malloc(num_vertices*sizeof(vec2));
-
-            // Initialize positions
-            uint16_t i = 0;
-                // Offset of the current vertex in `positions`.
-            for (uint8_t row = 0; row < text_field->height; ++row) {
-                for (uint8_t col = 0; col < text_field->width; ++col) {
-                    // Coordinates of the top-left corner of this character.
-                    uint16_t x = text_field->x + col*char_width;
-                    uint16_t y = text_field->y - row*char_height;
-
-                    // Set up coordinates for the following two triangles:
-                    //
-                    //               (x, y)        (x + char_width, y)
-                    //                     A-----,B
-                    //                     | 1  / |
-                    //                     |  ,`  |
-                    //                     | /  2 |
-                    //                     C------D
-                    // (x, y - char_height)        (x + char_width, y - char_height)
-
-                    // Triangle 1: top left, ABC
-                    positions[i++] = (vec2){ x,             y };
-                    positions[i++] = (vec2){ x+char_width,  y };
-                    positions[i++] = (vec2){ x,             y-char_height };
-
-                    // Triangle 2: bottom right, DBC
-                    positions[i++] = (vec2){ x+char_width, y-char_height };
-                    positions[i++] = (vec2){ x+char_width, y };
-                    positions[i++] = (vec2){ x,            y-char_height };
-                }
-            }
-
-            glBufferData(
-                GL_ARRAY_BUFFER,
-                num_vertices*sizeof(vec2),
-                positions,
-                GL_STATIC_DRAW
-            );
-            glVertexAttribPointer(
-                VERTEX_ATTRIB_POSITION, 2, GL_FLOAT, GL_FALSE, 0, 0);
-            glEnableVertexAttribArray(VERTEX_ATTRIB_POSITION);
-
-            free(positions);
-        }
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-    }
-    glBindVertexArray(0);
+    // Initialize the vertex position buffer.
+    TextField_UpdateVertices(text_field);
 
     // Create empty output buffer.
     text_field->buffer = Malloc(text_field->width*text_field->height);
@@ -319,6 +323,13 @@ TextField *TextField_New(
     TextField_Flush(text_field);
 
     return text_field;
+}
+
+void TextField_SetLocation(TextField *text_field, uint16_t x, uint16_t y)
+{
+    text_field->x = x;
+    text_field->y = y;
+    TextField_UpdateVertices(text_field);
 }
 
 void TextField_SetForegroundColor(TextField *text_field, const vec4 *color)
@@ -398,6 +409,10 @@ void TextField_Printf(TextField *text_field, const char *fmt, ...)
         fmt, args
     );
 
+    if (length > text_field->width - text_field->cursor_x) {
+        length = text_field->width - text_field->cursor_x;
+    }
+
     char *end = TextField_CharAt(
         text_field, text_field->cursor_y, text_field->cursor_x + length - 1);
     if (*end == '\n') {
@@ -405,8 +420,7 @@ void TextField_Printf(TextField *text_field, const char *fmt, ...)
         TextField_Scroll(text_field);
         TextField_Flush(text_field);
     } else {
-        text_field->cursor_x = UintMin(
-            text_field->cursor_x + length, text_field->width);
+        text_field->cursor_x += length;
     }
 }
 

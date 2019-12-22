@@ -41,6 +41,10 @@ void Terrain_Init(Terrain *terrain,
             face->material = &rough;
         }
     }
+
+    for (uint8_t hole = 0; hole < 18; ++hole) {
+        terrain->holes[hole].par = PAR_NONE;
+    }
 }
 
 void Terrain_Destroy(Terrain *terrain)
@@ -176,4 +180,130 @@ void Terrain_RaiseFace(
     Terrain_RaiseFaceVertex(terrain, min, max, row, col, TOP_RIGHT,    delta);
     Terrain_RaiseFaceVertex(terrain, min, max, row, col, BOTTOM_RIGHT, delta);
     Terrain_RaiseFaceVertex(terrain, min, max, row, col, BOTTOM_LEFT,  delta);
+}
+
+static float Terrain_GetVertex(
+    const Terrain *terrain, uint16_t row, uint16_t col)
+{
+    ASSERT(row < Terrain_VertexHeight(terrain));
+    ASSERT(col < Terrain_VertexWidth(terrain));
+
+    if (row < Terrain_FaceHeight(terrain)) {
+        if (col < Terrain_FaceWidth(terrain)) {
+            return Terrain_GetConstFace(terrain, row, col)->vertices[BOTTOM_LEFT];
+        } else {
+            return Terrain_GetConstFace(terrain, row, col - 1)->vertices[BOTTOM_RIGHT];
+        }
+    } else {
+        if (col < Terrain_FaceWidth(terrain)) {
+            return Terrain_GetConstFace(terrain, row - 1, col)->vertices[TOP_LEFT];
+        } else {
+            return Terrain_GetConstFace(terrain, row - 1, col - 1)->vertices[TOP_RIGHT];
+        }
+    }
+}
+
+float Terrain_SampleHeight(const Terrain *terrain, float x, float y)
+{
+    ASSERT(0 <= x && x < Terrain_FaceWidth(terrain)*terrain->xy_resolution);
+    ASSERT(0 <= y && y < Terrain_FaceHeight(terrain)*terrain->xy_resolution);
+
+    // Get the coordinates relative to the face containing the point, so we can
+    // figure out which triangle we will interpolate within.
+    float row, col;
+    float u = modff(x/terrain->xy_resolution, &row);
+    float v = modff(y/terrain->xy_resolution, &col);
+
+    // We can think of the face as being partitioned into two triangles by the
+    // line `u = v`:
+    //
+    //   v
+    //    ^        col   col+1
+    //    |         |      |
+    //    | row+1 --+------+--
+    //    |         |    / |
+    //    |         |   /  |
+    //    |         |  /u=v|
+    //    |         | /    |
+    //    | row   --+------+--
+    //    |         |      |
+    //    |
+    //    ----------------------> u
+    //
+    // We will pick the one containing (u, v) to interpolate within.
+    vec2 a, b, c;
+    if (v > u) {
+        // Top left triangle
+        a = (vec2){ col,     row + 1 };
+        b = (vec2){ col,     row     };
+        c = (vec2){ col + 1, row + 1 };
+    } else {
+        // Bottom right triangle
+        a = (vec2){ col + 1, row     };
+        b = (vec2){ col + 1, row + 1 };
+        c = (vec2){ col,     row     };
+    }
+
+    // Now do the actual interpolation. The result will be a weighted average of
+    // the z-coordinate of each vertex in the selected triangle:
+    //                      Z = WaZa + WbZb + WcZc
+    // The weights are chosen using barycentric coordinates, which is the
+    // standard solution for interpolation within a triangle.
+    //
+    // A good introduction to barycentric coordinates can be found here:
+    //      https://codeplea.com/triangular-interpolation
+    // The bottom line is we get formulae for the weights in the above equation:
+    //
+    //           (b.y - c.y)(u   - c.x) + (c.x - b.x)(v   - c.y)
+    //     Wa = -------------------------------------------------
+    //           (b.y - c.y)(a.x - c.x) + (c.x - b.x)(a.y - c.y)
+    //
+    //           (c.y - a.y)(u   - c.x) + (a.x - c.x)(v   - c.y)
+    //     Wb = -------------------------------------------------
+    //           (b.y - c.y)(a.x - c.x) + (c.x - b.x)(a.y - c.y)
+    //
+    //     Wc = 1 - Wa - Wb
+    //
+    float Wa = ((b.y - c.y)*(u   - c.x) + (c.x - b.x)*(v   - c.y)) /
+               ((b.y - c.y)*(a.x - c.x) + (c.x - b.x)*(a.y - c.y));
+    float Wb = ((c.y - a.y)*(u   - c.x) + (a.x - c.x)*(v   - c.y)) /
+               ((b.y - c.y)*(a.x - c.x) + (c.x - b.x)*(a.y - c.y));
+    float Wc = 1 - Wa - Wb;
+
+    return Wa*Terrain_GetVertex(terrain, round(a.y), round(a.x)) +
+           Wb*Terrain_GetVertex(terrain, round(b.y), round(b.x)) +
+           Wc*Terrain_GetVertex(terrain, round(c.y), round(c.x));
+}
+
+void Terrain_DefineHole(
+    Terrain *terrain, uint8_t hole, Par par, uint16_t(*shot_points)[2])
+{
+    ASSERT(hole < 18);
+    ASSERT(3 <= par && par <= 5);
+    terrain->holes[hole].par = par;
+    memcpy(
+        terrain->holes[hole].shot_points,
+        shot_points,
+        (par - 1)*sizeof(shot_points[2])
+    );
+}
+
+uint32_t Terrain_GetHoleLength(const Terrain *terrain, const Hole *hole)
+{
+    ASSERT(3 <= hole->par && hole->par <= 5);
+
+    float length = 0;
+    for (uint8_t i = 0; i < hole->par - 2; ++i) {
+        // Add the length of the `i`th shot.
+        vec2 shot = { (float)hole->shot_points[i + 1][1] -
+                      (float)hole->shot_points[i][1]
+                    , (float)hole->shot_points[i + 1][0] -
+                      (float)hole->shot_points[i][0]
+                    };
+        length += vec2_Norm(&shot);
+    }
+
+    return round(length*terrain->xy_resolution);
+        // The length is now in row/col units. We have to multiply by the
+        // horizontal resolution to get it in units of yards.
 }

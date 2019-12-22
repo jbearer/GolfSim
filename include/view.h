@@ -294,12 +294,6 @@ typedef struct View {
     // Console
     struct Console *console;
         // Each view has an optional console for debugging.
-    const struct Command *console_program;
-    void *console_state;
-        // The Console view itself comes and goes, as we close it when it loses
-        // focus. However, when the user enters the console shortcut, we need to
-        // recreate the console again, so we save the program that it was
-        // running and the state.
 
     // Callbacks
     View_RenderFunction render;
@@ -434,6 +428,32 @@ void View_GetWindowSize(const View *view, uint32_t *width, uint32_t *height);
  * \brief Get the position of the cursor in the window containing this view.
  */
 void View_GetCursorPos(const View *view, int32_t *x, int32_t *y);
+
+/**
+ * \brief Attach a view as a sub-view of a parent view.
+ *
+ * If `view` is already a sub-view of a parent view, it will first be detached,
+ * as if by calling `View_Detach(view)`. It will then be attached to `parent`,
+ * if `parent` is not `NULL`, or as a top-level view otherwise.
+ *
+ * The final state of `view` is as if `parent` had been passed to `View_New`
+ * when `view` was created.
+ */
+void View_Attach(View *view, View *parent);
+
+/**
+ * \brief Detach a view tree from its manager.
+ *
+ * The sub-tree rooted at `view` is torn wholesale out of all internal view data
+ * structures, including the `ViewManager` and the parent view, if `view` has
+ * one.
+ */
+void View_Detach(View *view);
+
+/**
+ * \brief Determine if this `view` has been detached.
+ */
+bool View_IsDetached(View *view);
 
 /**
  * \brief Close and destroy the view.

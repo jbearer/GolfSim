@@ -185,6 +185,10 @@ struct TerrainView {
     GLuint gl_lines_shader_mvp;
     GLuint gl_ruler_vao;
     GLuint gl_ruler_buffer;
+    bool show_holes;
+    GLuint gl_holes_vao[18];
+    GLuint gl_holes_buffers[18];
+    TextField *hole_labels[18];
 
 #ifndef NDEBUG
     uint32_t dts[10];
@@ -197,6 +201,184 @@ struct TerrainView {
 
 static Command view_program;
 
+// Convert a vector in camera coordinates (EN) to one in world coordinates (XY).
+static inline vec2 TerrainView_ENtoXY(vec2 en)
+{
+    // We want to convert deltas in camera coordinates (the north and east
+    // directions) to deltas in the x and y directions. To convert, we'll first
+    // make the observation that we don't need to do anything special to handle
+    // movement along the north and east axes simultaneously, because we can
+    // just move north and then east in two steps -- walking 4 steps north and
+    // then 3 steps east is the same as walking 5 steps in a north-northeasterly
+    // direction:
+    //
+    //                                  3
+    //                                .----B
+    //                                |   /
+    //                              4 |  / 5
+    //                                | /
+    //                                A`
+    //
+    // With that in mind, we will first figure out how to convert from a
+    // northerly delta to X and Y deltas, and then we'll do the same for east.
+    // Here's a picture showing both coordinate systems:
+    //                                                                        //
+    //                                 ,^.                                    //
+    //                               ,`   ',                                  //
+    //                             ,`       ',                                //
+    //                  Y        ,`           ',        X                     //
+    //                   `,    ,`               ',    ,`                      //
+    //                     `\,`                   ` /                         //
+    //                       `,        CAM'       ,`                          //
+    //                         `,       |       ,`                            //
+    //                           `,  θ _|ΔN   ,`                              //
+    //                             `, , |   ,`                                //
+    //                       /,      `, | ,`\θ     ,\                         //
+    //                         `,      CAM--|--  ,`                           //
+    //                       Δyₙ `,            ,`Δxₙ                          //
+    //                             `/        \`                               //
+    //                                                                        //
+    // (The angle θ here is the angle between the XY axes and the north-east
+    // axes, which is always π/4 in our isometric projection).
+    //
+    // Using basic trig identities, we can see that
+    //                      Δxₙ/ΔN = cos(π/2 - θ)
+    //                      Δyₙ/ΔN = cos(θ)
+    // so
+    //                      Δxₙ    = ΔNcos(π/2 - π/4) = ΔN/√2
+    //                      Δyₙ    = ΔNcos(π/4)       = ΔN/√2
+    //
+    // We use a similar tactic for the east delta:
+    //                                                                        //
+    //                                 ,^.                                    //
+    //                               ,`   ',                                  //
+    //                             ,`       ',                                //
+    //                  Y        ,`           ',        X                     //
+    //                   `,    ,`               ',    ,`                      //
+    //                     `\,`                   ` /                         //
+    //                       `,                   ,`                          //
+    //                         `,       |       ,`                            //
+    //                           `,  θ _|     ,`                              //
+    //                             `, , |   ,`                                //
+    //                               `, | ,`\θ                                //
+    //                                 CAM--|---CAM'                          //
+    //                                      ΔE     ,\                         //
+    //                              /,           ,`                           //
+    //                                `,       \`   Δxₑ                       //
+    //                            -Δyₑ  `/                                    //
+    //                                                                        //
+    // Once again with basic trig identities, we get
+    //                    Δxₑ/ΔE = cos(θ)
+    //                    Δyₑ/ΔE = -sin(θ)
+    // so
+    //                    Δxₑ    =  ΔEcos(π/4) = ΔE/√2
+    //                    Δyₑ    = -ΔEsin(π/4) = -ΔE/√2
+    //
+    // Putting together the deltas from the northerly move and the easterly
+    // move, we get
+    //                   Δx = Δxₙ + Δxₑ = 1/√2 (ΔN + ΔE)
+    //                   Δy = Δyₙ + Δyₑ = 1/√2 (ΔN - ΔE)
+    return (vec2){M_SQRT1_2*(en.y + en.x), M_SQRT1_2*(en.y - en.x)};
+}
+
+// Convert a vector in world coordinates (XY) to one in camera coordinates (EN).
+static inline vec2 TerrainView_XYtoEN(vec2 xy)
+{
+    // In the comments in TerrainView_ENtoXY, we derive
+    //                        x = 1/√2 (N + E)
+    //                        y = 1/√2 (N - E)
+    // Adding these two equations gives
+    //                    x + y = N√2
+    // or
+    //                        N = 1/√2 (x + y)
+    // and subtracting them gives
+    //                    x - y = E√2
+    // or
+    //                        E = 1/√2 (x - y)
+    return (vec2){M_SQRT1_2*(xy.x - xy.y), M_SQRT1_2*(xy.x + xy.y)};
+}
+
+// Convert a vector in world coordinates to one in screen coordinates.
+static vec2 TerrainView_XYtoScreen(const TerrainView *view, vec2 xy)
+{
+    // Convert to normalized device coordinates by applying the view-projection
+    // matrix. This is the exact same transformation that we do for each terrain
+    // vertex in the shader.
+    vec4 p = { xy.x, xy.y, Terrain_SampleHeight(view->terrain, xy.x, xy.y), 1 };
+    mat4_ApplyInPlace(&view->view_projection, &p);
+    vec4_ScaleInPlace(1.0/p.w, &p);
+
+    // `p` is now in normalized device coordinates, which means `p.x` and `p.y`
+    // range from -1 to 1. We need to map this range to the width and height of
+    // the window, respectively.
+    uint32_t width, height;
+    View_GetWindowSize((View *)view, &width, &height);
+    return (vec2){ width*(p.x + 1)/2, height*(p.y + 1)/2 };
+}
+
+static void TerrainView_UpdateHoleLines(TerrainView *view)
+{
+    for (uint8_t i = 0; i < 18; ++i) {
+        const Hole *hole = Terrain_GetConstHole(view->terrain, i);
+        if (hole == NULL) {
+            View_Detach((View *)view->hole_labels[i]);
+            continue;
+        }
+
+        // Create a buffer of waypoints.
+        vec3 points[4];
+        for (uint8_t j = 0; j < hole->par - 1; ++j) {
+            uint16_t row = hole->shot_points[j][0];
+            uint16_t col = hole->shot_points[j][1];
+
+            float x = col*view->terrain->xy_resolution +
+                      view->terrain->xy_resolution/2;
+            float y = row*view->terrain->xy_resolution +
+                      view->terrain->xy_resolution/2;
+            float z = Terrain_SampleHeight(view->terrain, x, y) + 1;
+                // The line is drawn 1 yard above the ground, to ensure it
+                // doesn't get depth-tested away.
+
+            points[j] = (vec3){x, y, z};
+        }
+
+        // Give the buffer to OpenGL.
+        glBindVertexArray(view->gl_holes_vao[i]);
+        {
+            glBindBuffer(GL_ARRAY_BUFFER, view->gl_holes_buffers[i]);
+            {
+                glBufferData(
+                    GL_ARRAY_BUFFER,
+                    sizeof(vec3)*hole->par - 1,
+                    points,
+                    GL_DYNAMIC_DRAW
+                );
+                glVertexAttribPointer(
+                    VERTEX_ATTRIB_POSITION, 3, GL_FLOAT, GL_FALSE, 0, 0);
+                glEnableVertexAttribArray(VERTEX_ATTRIB_POSITION);
+            }
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+        }
+        glBindVertexArray(0);
+
+        // Fix the hole's label, if necessary.
+        if (view->show_holes) {
+            vec2 hole_loc_world = { points[hole->par - 2].x
+                                  , points[hole->par - 2].y };
+            vec2 hole_loc_screen = TerrainView_XYtoScreen(view, hole_loc_world);
+
+            TextField_SetLocation(
+                view->hole_labels[i],
+                hole_loc_screen.x + 5,
+                hole_loc_screen.y + 10
+            );
+            View_Attach((View *)view->hole_labels[i], (View *)view);
+        } else {
+            View_Detach((View *)view->hole_labels[i]);
+        }
+    }
+}
+
 static void TerrainView_UpdateMVP(TerrainView *view)
 {
     // Initialize the perspective projection.
@@ -207,8 +389,9 @@ static void TerrainView_UpdateMVP(TerrainView *view)
             // pi/3, or 60 degree, field of vision.
         (float)window_width/window_height,
             // Aspect ratio is determined by window size.
-        10.0, 1000.0
-            // We use 10 yards for the near clipping plane and 1000 for the far.
+        10.0, 5000.0
+            // Distances in yards to the near and var clipping planes,
+            // respectively.
     );
 
     // Initialize camera position:                                            //
@@ -329,6 +512,10 @@ static void TerrainView_UpdateMVP(TerrainView *view)
         );
     }
     glUseProgram(0);
+
+    TerrainView_UpdateHoleLines(view);
+        // The hole lines depend on the MVP, because they use it to map world
+        // coordinates to screen coordinates in order to position labels.
 }
 
 static void TerrainView_VertexNormal(
@@ -603,6 +790,10 @@ static void TerrainView_UpdateFaceHeights(TerrainView *view)
     free(normals);
         // GL has copied the vertex data into GPU memory, so we can free our
         // buffer.
+
+    TerrainView_UpdateHoleLines(view);
+        // The hole lines depend on the face heights, because we draw them at
+        // the height of the shot-points.
 }
 
 static void TerrainView_UpdateFaceColors(TerrainView *view)
@@ -644,103 +835,6 @@ static void TerrainView_UpdateFaceColors(TerrainView *view)
     }
     glBindVertexArray(0);
     free(colors);
-}
-
-// Convert a vector in camera cooridnates (EN) to one in world coordinates (XY).
-static inline vec2 TerrainView_ENtoXY(vec2 en)
-{
-    // We want to convert deltas in camera coordinates (the north and east
-    // directions) to deltas in the x and y directions. To convert, we'll first
-    // make the observation that we don't need to do anything special to handle
-    // movement along the north and east axes simultaneously, because we can
-    // just move north and then east in two steps -- walking 4 steps north and
-    // then 3 steps east is the same as walking 5 steps in a north-northeasterly
-    // direction:
-    //
-    //                                  3
-    //                                .----B
-    //                                |   /
-    //                              4 |  / 5
-    //                                | /
-    //                                A`
-    //
-    // With that in mind, we will first figure out how to convert from a
-    // northerly delta to X and Y deltas, and then we'll do the same for east.
-    // Here's a picture showing both coordinate systems:
-    //                                                                        //
-    //                                 ,^.                                    //
-    //                               ,`   ',                                  //
-    //                             ,`       ',                                //
-    //                  Y        ,`           ',        X                     //
-    //                   `,    ,`               ',    ,`                      //
-    //                     `\,`                   ` /                         //
-    //                       `,        CAM'       ,`                          //
-    //                         `,       |       ,`                            //
-    //                           `,  θ _|ΔN   ,`                              //
-    //                             `, , |   ,`                                //
-    //                       /,      `, | ,`\θ     ,\                         //
-    //                         `,      CAM--|--  ,`                           //
-    //                       Δyₙ `,            ,`Δxₙ                          //
-    //                             `/        \`                               //
-    //                                                                        //
-    // (The angle θ here is the angle between the XY axes and the north-east
-    // axes, which is always π/4 in our isometric projection).
-    //
-    // Using basic trig identities, we can see that
-    //                      Δxₙ/ΔN = cos(π/2 - θ)
-    //                      Δyₙ/ΔN = cos(θ)
-    // so
-    //                      Δxₙ    = ΔNcos(π/2 - π/4) = ΔN/√2
-    //                      Δyₙ    = ΔNcos(π/4)       = ΔN/√2
-    //
-    // We use a similar tactic for the east delta:
-    //                                                                        //
-    //                                 ,^.                                    //
-    //                               ,`   ',                                  //
-    //                             ,`       ',                                //
-    //                  Y        ,`           ',        X                     //
-    //                   `,    ,`               ',    ,`                      //
-    //                     `\,`                   ` /                         //
-    //                       `,                   ,`                          //
-    //                         `,       |       ,`                            //
-    //                           `,  θ _|     ,`                              //
-    //                             `, , |   ,`                                //
-    //                               `, | ,`\θ                                //
-    //                                 CAM--|---CAM'                          //
-    //                                      ΔE     ,\                         //
-    //                              /,           ,`                           //
-    //                                `,       \`   Δxₑ                       //
-    //                            -Δyₑ  `/                                    //
-    //                                                                        //
-    // Once again with basic trig identities, we get
-    //                    Δxₑ/ΔE = cos(θ)
-    //                    Δyₑ/ΔE = -sin(θ)
-    // so
-    //                    Δxₑ    =  ΔEcos(π/4) = ΔE/√2
-    //                    Δyₑ    = -ΔEsin(π/4) = -ΔE/√2
-    //
-    // Putting together the deltas from the northerly move and the easterly
-    // move, we get
-    //                   Δx = Δxₙ + Δxₑ = 1/√2 (ΔN + ΔE)
-    //                   Δy = Δyₙ + Δyₑ = 1/√2 (ΔN - ΔE)
-    return (vec2){M_SQRT1_2*(en.y + en.x), M_SQRT1_2*(en.y - en.x)};
-}
-
-// Convert a vector in world coordinates (XY) to one in camera coordinates (EN).
-static inline vec2 TerrainView_XYtoEN(vec2 xy)
-{
-    // In the comments in TerrainView_ENtoXY, we derive
-    //                        x = 1/√2 (N + E)
-    //                        y = 1/√2 (N - E)
-    // Adding these two equations gives
-    //                    x + y = N√2
-    // or
-    //                        N = 1/√2 (x + y)
-    // and subtracting them gives
-    //                    x - y = E√2
-    // or
-    //                        E = 1/√2 (x - y)
-    return (vec2){M_SQRT1_2*(xy.x - xy.y), M_SQRT1_2*(xy.x + xy.y)};
 }
 
 // Move the camera north and east by the given deltas. `north` and `east` may
@@ -926,8 +1020,7 @@ static void TerrainView_HandleClick(
                         5, 1,                   // cols x rows
                         15                      // font size
                     );
-                    vec4 clear = { 0, 0, 0, 0 };
-                    TextField_SetBackgroundColor(view->ruler_text, &clear);
+                    TextField_SetBackgroundColor(view->ruler_text, &RGBA_CLEAR);
                 } else if (action == MOUSE_DRAG) {
                     if (view->ruler_text == NULL) {
                         ASSERT(!view->draw_ruler);
@@ -1167,6 +1260,22 @@ static void TerrainView_Render(View *view_base, uint32_t dt)
         glBindVertexArray(0);
     }
 
+    if (view->show_holes) {
+        glUseProgram(view->gl_lines_shaders);
+        for (uint8_t i = 0; i < 18; ++i) {
+            const Hole *hole = Terrain_GetConstHole(view->terrain, i);
+            if (hole == NULL) {
+                continue;
+            }
+
+            glBindVertexArray(view->gl_holes_vao[i]);
+            {
+                glDrawArrays(GL_LINE_STRIP, 0, hole->par - 1);
+            }
+            glBindVertexArray(0);
+        }
+    }
+
     if (view->draw_ruler) {
         // Draw ruler
         glUseProgram(view->gl_lines_shaders);
@@ -1186,6 +1295,20 @@ static void TerrainView_Render(View *view_base, uint32_t dt)
     }
 }
 
+static void TerrainView_Destroy(View *view_base)
+{
+    TerrainView *view = (TerrainView *)view_base;
+
+    // Close detached labels (which aren't children, and hence won't be
+    // automatically closed).
+    for (uint8_t i = 0; i < 18; ++i) {
+        View *label = (View *)view->hole_labels[i];
+        if (View_IsDetached(label)) {
+            View_Close(label);
+        }
+    }
+}
+
 TerrainView *TerrainView_New(ViewManager *manager, Terrain *terrain)
 {
     TerrainView *view = (TerrainView *)View_New(
@@ -1193,11 +1316,13 @@ TerrainView *TerrainView_New(ViewManager *manager, Terrain *terrain)
     View_SetRenderCallback((View *)view, TerrainView_Render);
     View_SetMouseButtonCallback((View *)view, TerrainView_HandleClick);
     View_SetScrollCallback((View *)view, TerrainView_HandleScroll);
+    View_SetDestroyCallback((View *)view, TerrainView_Destroy);
 
     view->terrain = terrain;
     view->show_terrain = true;
     view->show_terrain_mesh = false;
-    view->show_axes = true;
+    view->show_axes = false;
+    view->show_holes = false;
     view->camera_x = 0;
     view->camera_y = 0;
     view->camera_zoom = 300;
@@ -1206,6 +1331,15 @@ TerrainView *TerrainView_New(ViewManager *manager, Terrain *terrain)
     view->ruler_start = (vec3){0, 0, 0};
     view->ruler_text = NULL;
     view->draw_ruler = false;
+
+    for (uint8_t i = 0; i < 18; ++i) {
+        view->hole_labels[i] = TextField_New(
+            sizeof(TextField), manager, (View *)view, 0, 0, 2, 1, 15);
+        TextField_SetBackgroundColor(view->hole_labels[i], &RGBA_CLEAR);
+        TextField_SetForegroundColor(view->hole_labels[i], &RGBA_BLACK);
+        TextField_Printf(view->hole_labels[i], "%d", i + 1);
+        TextField_Flush(view->hole_labels[i]);
+    }
 
 #ifndef NDEBUG
     memset(view->dts, 0, sizeof(view->dts));
@@ -1231,6 +1365,8 @@ TerrainView *TerrainView_New(ViewManager *manager, Terrain *terrain)
     // Initialize lines
     glGenVertexArrays(1, &view->gl_ruler_vao);
     glGenBuffers(1, &view->gl_ruler_buffer);
+    glGenVertexArrays(18, view->gl_holes_vao);
+    glGenBuffers(18, view->gl_holes_buffers);
 
     ////////////////////////////////////////////////////////////////////////////
     // Initialize axis data
@@ -1284,6 +1420,11 @@ TerrainView *TerrainView_New(ViewManager *manager, Terrain *terrain)
     // Initialize view matrices
     //
     TerrainView_UpdateMVP(view);
+
+    ////////////////////////////////////////////////////////////////////////////
+    // Initialize holes
+    //
+    TerrainView_UpdateHoleLines(view);
 
     ////////////////////////////////////////////////////////////////////////////
     // Initialize console
@@ -1353,8 +1494,18 @@ DECLARE_RUNNABLE(
     view->show_terrain_mesh = true;
 }
 
+DECLARE_RUNNABLE(show_routing, "routing", "enable rendering of routing map")
+{
+    (void)console;
+    (void)argc;
+    (void)argv;
+
+    view->show_holes = true;
+    TerrainView_UpdateHoleLines(view);
+}
+
 DECLARE_SUB_COMMANDS(show, "show", "enable rendering of scene entities",
-    &show_axes, &show_terrain, &show_terrain_mesh);
+    &show_axes, &show_terrain, &show_terrain_mesh, &show_routing);
 
 ////////////////////////////////////////////////////////////////////////////////
 // Hide
@@ -1388,8 +1539,18 @@ DECLARE_RUNNABLE(
     view->show_terrain_mesh = false;
 }
 
+DECLARE_RUNNABLE(hide_routing, "routing", "disable rendering of routing map")
+{
+    (void)console;
+    (void)argc;
+    (void)argv;
+
+    view->show_holes = false;
+    TerrainView_UpdateHoleLines(view);
+}
+
 DECLARE_SUB_COMMANDS(hide, "hide", "disable rendering of scene entities",
-    &hide_axes, &hide_terrain, &hide_terrain_mesh);
+    &hide_axes, &hide_terrain, &hide_terrain_mesh, &hide_routing);
 
 ////////////////////////////////////////////////////////////////////////////////
 // Window
@@ -1722,6 +1883,49 @@ DECLARE_RUNNABLE(terrain_bulk_raise_vertex, "bulk-raise-vertex",
     TerrainView_UpdateFaceHeights(view);
 }
 
+DECLARE_RUNNABLE(terrain_define_hole, "define-hole",
+    "enter shot-points for a hole")
+{
+    if (argc < 5 || argc > 9) {
+        // We're supposed to have a row and a column per `par - 1` (4 - 8) plus
+        // one argument for the hole number.
+        TextField_PutLine((TextField *)console,
+            "command 'terrain define-hole' takes between 5 and 9 arguments");
+        return;
+    }
+
+    int hole = atoi(argv[0]);
+    if (hole < 1 || hole > 18) {
+        TextField_PutLine((TextField *)console, "hole must be between 1 and 18");
+        return;
+    }
+
+    Par par = (argc - 1)/2 + 1;
+    ASSERT(3 <= par && par <= 5);
+
+    uint16_t shot_points[4][2];
+    for (uint8_t i = 0; i < par - 1; ++i) {
+        ASSERT(1 + 2*i + 1 < argc);
+        int row = atoi(argv[1 + 2*i]);
+        int col = atoi(argv[1 + 2*i + 1]);
+
+        if (row < 0 || row >= Terrain_FaceHeight(view->terrain)) {
+            TextField_Printf((TextField *)console, "row %d out of range\n", i);
+            return;
+        }
+        if (col < 0 || col >= Terrain_FaceWidth(view->terrain)) {
+            TextField_Printf((TextField *)console, "col %d out of range\n", i);
+            return;
+        }
+
+        shot_points[i][0] = row;
+        shot_points[i][1] = col;
+    }
+
+    Terrain_DefineHole(view->terrain, hole - 1, par, shot_points);
+    TerrainView_UpdateHoleLines(view);
+}
+
 DECLARE_RUNNABLE(terrain_info_normal, "normal",
     "print the normal vector for the vertex at (<row>, <col>)")
 {
@@ -1789,15 +1993,35 @@ DECLARE_RUNNABLE(terrain_info_height, "height",
     TextField_Printf((TextField *)console, "%u\n", height);
 }
 
+DECLARE_RUNNABLE(terrain_info_routing, "routing",
+    "print information about each hole")
+{
+    (void)argc;
+    (void)argv;
+
+    TextField_PutLine((TextField *)console, " Hole | Par | Length");
+    TextField_PutLine((TextField *)console, "------|-----|--------");
+    for (uint8_t i = 0; i < 18; ++i) {
+        const Hole *hole = Terrain_GetConstHole(view->terrain, i);
+        TextField_Printf((TextField *)console, " %3d  |", i + 1);
+        if (hole != NULL) {
+            TextField_Printf((TextField *)console, "  %d  | %d\n",
+                hole->par, Terrain_GetHoleLength(view->terrain, hole));
+        } else {
+            TextField_PutLine((TextField *)console, "  -  |   -");
+        }
+    }
+}
+
 DECLARE_SUB_COMMANDS(terrain_info, "info",
     "get information about various aspects of the terrain",
-    &terrain_info_normal, &terrain_info_height);
+    &terrain_info_normal, &terrain_info_height, &terrain_info_routing);
 
 DECLARE_SUB_COMMANDS(terrain, "terrain", "inspect and manipulate the terrain",
     &terrain_set, &terrain_bulk_set,
     &terrain_raise_face, &terrain_bulk_raise_face,
     &terrain_raise_vertex, &terrain_bulk_raise_vertex,
-    &terrain_info);
+    &terrain_define_hole, &terrain_info);
 
 ////////////////////////////////////////////////////////////////////////////////
 // HUD

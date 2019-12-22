@@ -129,6 +129,11 @@ TextField *TextField_New(size_t size, ViewManager *manager, View *parent,
     uint16_t x, uint16_t y, uint8_t width, uint8_t height, uint8_t font_size);
 
 /**
+ * \brief Set the position of the top left corner of the text field.
+ */
+void TextField_SetLocation(TextField *text_field, uint16_t x, uint16_t y);
+
+/**
  * \brief Set the foreground color of the text field.
  *
  * \param text_field The text field to update.

@@ -48,6 +48,31 @@ typedef struct {
 #define BOTTOM_RIGHT 2
 #define BOTTOM_LEFT  3
 
+typedef enum {
+    PAR_3 = 3,
+    PAR_4 = 4,
+    PAR_5 = 5,
+
+    PAR_NONE = 0,
+        // Sentinel indicating that this hole has not been defined yet.
+} Par;
+
+typedef struct {
+    Par par;
+
+    uint16_t shot_points[4][2];
+        // List of targets defining the shape of the hole. Each shot point is
+        // a pair of integers, the (row, col) coordinates of the face containing
+        // the shot point. The shot point is considered to be in the center of
+        // the face.
+        //
+        // Each hole has `par - 1` shot points. `shot_points[0]` is the location
+        // of the tee. `shot_points[1]` is the landing area for the tee shot for
+        // par 4 and 5 holes, or the location of the hole for par 3 holes.
+        // `shot_points[2]` is the landing area for the second shot on par 5
+        // holes, and so on.
+} Hole;
+
 typedef struct {
     uint16_t width;
         ///< Number of edges
@@ -57,6 +82,7 @@ typedef struct {
         ///< Resolution in the XY plane; that is, the length or width of a face
     Face *faces;
         ///< Dimension width x height
+    Hole holes[18];
 } Terrain;
 
 /**
@@ -163,6 +189,50 @@ static inline const Face *Terrain_GetConstFace(
 }
 
 /**
+ * \brief Get a reference to a given hole, if it is defined.
+ *
+ * \pre
+ * `hole < 18`
+ *
+ * \return
+ * A pointer to the requested `Hole`, or `NULL` if the hole has not been defined
+ * yet.
+ */
+static inline const Hole *Terrain_GetConstHole(
+    const Terrain *terrain, uint8_t hole)
+{
+    ASSERT(hole < 18);
+    const Hole *h = &terrain->holes[hole];
+    if (h->par == PAR_NONE) {
+        return NULL;
+    } else {
+        return h;
+    }
+}
+
+/**
+ * \brief Get the height of the terrain at a point.
+ *
+ * \param x     x-coordinate of the point to sample.
+ * \param y     y-coordinate of the point to sample.
+ *
+ * This function will return the height of the terrain at exactly `(x, y)`. If
+ * `(x, y)` is not an integer multiple of the XY resolution of the terrain, the
+ * height will be interpolated linearly within the face containing `(x, y)`.
+ *
+ * \pre
+ * `0 <= x && x < Terrain_FaceWidth(terrain)*terrain->xy_resolution`
+ *
+ * \pre
+ * `0 <= y && y < Terrain_FaceHeight(terrain)*terrain->xy_resolution`
+ *
+ * \note
+ * This function takes its arguments in XY order, rather than row-column order.
+ *
+ */
+float Terrain_SampleHeight(const Terrain *terrain, float x, float y);
+
+/**
  * \brief Initialize a terrain object.
  *
  * \param width         The width of the terrain in faces.
@@ -241,5 +311,33 @@ void Terrain_RaiseFace(
  */
 void Terrain_RaiseVertex(
     Terrain *terrain, uint16_t row, uint16_t col, int16_t delta);
+
+/**
+ * \brief Set the par and shot points for a hole.
+ *
+ * \param hole          The index of the hole to define.
+ * \param par           The par of the new hole.
+ * \param shot_points   Array of at least `par - 1` (row, col) pairs, defining
+ *                      the shot-points of the new hole.
+ *
+ * \pre
+ * `hole < 18`
+ *
+ * \pre
+ * `par` is one of `PAR_3`, `PAR_4`, or `PAR_5`.
+ */
+void Terrain_DefineHole(
+    Terrain *terrain, uint8_t hole, Par par, uint16_t(*shot_points)[2]);
+
+/**
+ * \brief Get the length of a hole.
+ *
+ * The length is computed by summing the distances between each successive shot-
+ * point.
+ *
+ * \pre
+ * `hole->par` is one of  `PAR_3`, `PAR_4`, or `PAR_5`.
+ */
+uint32_t Terrain_GetHoleLength(const Terrain *terrain, const Hole *hole);
 
 #endif

@@ -40,7 +40,8 @@ static inline View *View_TraversalPop(ViewTraversal *queue)
     queue->head = head->queue_next;
     head->queue_next = NULL;
     if (queue->tail == head) {
-        queue->tail = head->queue_next;
+        ASSERT(queue->head == NULL);
+        queue->tail = NULL;
     }
 
     return head;
@@ -64,6 +65,7 @@ static inline void View_TraversalPush(ViewTraversal *queue, View *view)
 // Initialize a `ViewTraversal` for the tree rooted at `view`.
 static ViewTraversal View_Traversal(View *view)
 {
+    ASSERT(view->queue_next == NULL);
     return (ViewTraversal) { .head = view, .tail = view };
         // Initially, the queue just contains `view`. We will add the children
         // of `view` after we pop and process `view`.
@@ -148,32 +150,13 @@ static void ViewManager_KeyCallback(
         // and `view->parent->console == view`.
         if (view->parent != NULL && (View *)view->parent->console == view) {
             // `view` is a console, and is already focused, so we close it.
-            View_Close(view);
+            View_Detach(view);
         } else if (view->console != NULL) {
             // `view` is not a console, but has one, so we show that.
-            View_Focus((View *)view->console);
-        } else if (view->console_program != NULL) {
-            // `view` does not have an active console, but it has a program to
-            // run, so we create a console to run the new program.
-            uint32_t window_width, window_height;
-            View_GetWindowSize(view, &window_width, &window_height);
-
-            view->console = Console_New(
-                view->manager, view,
-                0,                      // x            (pixels)
-                window_height,          // y            (pixels)
-                80,                     // width        (columns)
-                window_height/15,       // height       (rows)
-                15,                     // font size    (height in pixels)
-                view->console_program,
-                view->console_state
-            );
-
+            View_Attach((View *)view->console, view);
             View_Focus((View *)view->console);
         } else {
-            // `view` is not a console, so technically we should display it's
-            // console as a sub-view. However, it hasn't given us a program to
-            // run, so we do nothing.
+            // `view` is not a console, and it doesn't have one, so we do nothing.
         }
 
         return;
@@ -371,8 +354,22 @@ void ViewManager_Destroy(ViewManager *manager)
 
 void View_UseProgram(View *view, const Command *program, void *state)
 {
-    view->console_program = program;
-    view->console_state = state;
+    uint32_t window_width, window_height;
+    View_GetWindowSize(view, &window_width, &window_height);
+
+    view->console = Console_New(
+        view->manager, view,
+        0,                      // x            (pixels)
+        window_height,          // y            (pixels)
+        80,                     // width        (columns)
+        window_height/15,       // height       (rows)
+        15,                     // font size    (height in pixels)
+        program, state
+    );
+
+    View_Detach((View *)view->console);
+        // Create it in a detached state; we don't want it to render until it
+        // becomes focused, when the user enters the console shortcut.
 }
 
 void ViewManager_Render(ViewManager *manager)
@@ -414,7 +411,13 @@ View *View_New(size_t size, ViewManager *manager, View *parent)
 
     // Parents
     view->manager = manager;
-    view->parent = parent;
+    view->parent = NULL;
+        // We don't point `view` at `parent` just yet. `View_Attach` will take
+        // care of that when the rest of the view is initialized.
+
+    // Siblings
+    view->next_sibling = NULL;
+    view->prev_sibling = NULL;
 
     // Children
     view->children = NULL;
@@ -424,8 +427,6 @@ View *View_New(size_t size, ViewManager *manager, View *parent)
 
     // Console
     view->console = NULL;
-    view->console_program = NULL;
-    view->console_state = NULL;
 
     // Callbacks
     view->render = NULL;
@@ -435,24 +436,7 @@ View *View_New(size_t size, ViewManager *manager, View *parent)
     view->mouse_button_callback = NULL;
     view->scroll_callback = NULL;
 
-    // Insert into parent's list of children, if parent is specified. Otherwise,
-    // insert into manager's list of top-level views.
-    View **siblings = parent ? &parent->children : &manager->roots;
-        // `siblings` is a pointer to the pointer to the first node in `view`'s
-        // sibling list. This will either be `parent`s `children` pointer, or
-        // `manager`'s `roots` pointer, depending on whether or not this is a
-        // top-level view.
-        //
-        // We get a pointer to this pointer so that we can modify it (we will
-        // end up setting it to point at `view`) without another branch to check
-        // if we should modify `parent->children` or `manager->roots`.
-    view->prev_sibling = NULL;
-    view->next_sibling = *siblings;
-    if (*siblings != NULL) {
-        (*siblings)->prev_sibling = view;
-    }
-    *siblings = view;
-
+    View_Attach(view, parent);
     return view;
 }
 
@@ -485,6 +469,85 @@ void View_GetCursorPos(const View *view, int32_t *x, int32_t *y)
         // Convert from top-left-relative to bottom-left-relative.
 }
 
+void View_Attach(View *view, View *parent)
+{
+    View_Detach(view);
+        // Detach in case it already belongs to a view tree.
+
+    view->parent = parent;
+
+    // Insert into parent's list of children, if parent is specified. Otherwise,
+    // insert into manager's list of top-level views.
+    View **siblings = parent ? &parent->children : &view->manager->roots;
+        // `siblings` is a pointer to the pointer to the first node in `view`'s
+        // sibling list. This will either be `parent`s `children` pointer, or
+        // `manager`'s `roots` pointer, depending on whether or not this is a
+        // top-level view.
+        //
+        // We get a pointer to this pointer so that we can modify it (we will
+        // end up setting it to point at `view`) without another branch to check
+        // if we should modify `parent->children` or `manager->roots`.
+    view->prev_sibling = NULL;
+    view->next_sibling = *siblings;
+    if (*siblings != NULL) {
+        (*siblings)->prev_sibling = view;
+    }
+    *siblings = view;
+}
+
+void View_Detach(View *view)
+{
+    // Remove `view` from it's parent's list of children.
+    if (view->parent == NULL && view->manager->roots == view) {
+        ASSERT(view->prev_sibling == NULL);
+        view->manager->roots = view->next_sibling;
+    } else if (view->parent != NULL && view->parent->children == view) {
+        ASSERT(view->prev_sibling == NULL);
+        view->parent->children = view->next_sibling;
+    }
+    if (view->next_sibling != NULL) {
+        view->next_sibling->prev_sibling = view->prev_sibling;
+    }
+    if (view->prev_sibling != NULL) {
+        view->prev_sibling->next_sibling = view->next_sibling;
+    }
+
+    // If `view` is focused, move the focus to it's parent.
+    if (view == view->manager->focused) {
+        view->manager->focused = view->parent;
+        if (view->manager->focused == NULL) {
+            view->manager->focused = view->manager->roots;
+        }
+    }
+
+    view->parent = NULL;
+    view->next_sibling = NULL;
+    view->prev_sibling = NULL;
+}
+
+bool View_IsDetached(View *view)
+{
+    if (view->parent == NULL &&
+        view != view->manager->roots &&
+        view->prev_sibling == NULL) {
+
+        // `view` has no parent, which means it is either a top-level view or
+        // detached.
+        //
+        // All top-level views are reachable from `manager->roots`. Since `view`
+        // is not equal to `view->managaer->roots`, and `view` has no
+        // `prev_sibling` (and therefore is not the `next_sibling` of any view)
+        // it is not reachable from `view->manager->roots`.
+        //
+        // Therefore, it must be detached.
+        ASSERT(view->next_sibling == NULL);
+        return true;
+
+    } else {
+        return false;
+    }
+}
+
 void View_Close(View *view)
 {
     // It is possible that `view` itself is the focused view, or, somewhat more
@@ -502,26 +565,15 @@ void View_Close(View *view)
             // to the next top-level view.
     }
 
-    // Remove `view` from it's parent's list of children.
-    if (view->parent == NULL && view->manager->roots == view) {
-        ASSERT(view->prev_sibling == NULL);
-        view->manager->roots = view->next_sibling;
-    } else if (view->parent != NULL && view->parent->children == view) {
-        ASSERT(view->prev_sibling == NULL);
-        view->parent->children = view->next_sibling;
-    }
-    if (view->next_sibling != NULL) {
-        view->next_sibling->prev_sibling = view->prev_sibling;
-    }
-    if (view->prev_sibling != NULL) {
-        view->prev_sibling->next_sibling = view->next_sibling;
-    }
-
     // If `view` is a console, it's parent has a pointer to it through
-    // `console`, so we need to close that.
+    // `console`. `View_Detach` does not clear this pointer, because the console
+    // subsystem uses `View_Detach`, to hide the console when it is not focused,
+    // but it still needs to keep a pointer to the console when it does that.
     if (view->parent != NULL && (View *)view->parent->console == view) {
         view->parent->console = NULL;
     }
+
+    View_Detach(view);
 
     // Traverse all the views in the sub-tree rooted at `view` and free them.
     ViewTraversal t = View_Traversal(view);
@@ -547,6 +599,20 @@ void View_Close(View *view)
         if (view->destroy != NULL) {
             view->destroy(view);
         }
+
+        if (view->console != NULL && ((View *)view->console)->parent == NULL) {
+            // `view` has a console, but the console is not a child of `view`
+            // (because it is hidden right now). This means the traversal will
+            // miss it, and we won't destroy the console unless we do it
+            // explicitly here.
+            ASSERT(((View *)view->console)->children == NULL);
+            ASSERT(View_IsDetached((View *)view->console));
+            if (((View *)view->console)->destroy != NULL) {
+                ((View *)view->console)->destroy((View *)view->console);
+                free(view->console);
+            }
+        }
+
         free(view);
     }
 }

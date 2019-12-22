@@ -170,7 +170,7 @@ static void TextInput_HandleKey(
             );
             break;
         case GLFW_KEY_ESCAPE:
-            View_Close((View *)text_input);
+            View_Detach((View *)text_input);
             return;
         default:
             break;

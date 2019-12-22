@@ -45,6 +45,11 @@ typedef struct {
     float y;
 } vec2;
 
+static inline float vec2_Norm(const vec2 *v)
+{
+    return sqrtf(v->x*v->x + v->y*v->y);
+}
+
 typedef struct {
     float x;
     float y;
@@ -143,6 +148,11 @@ static const vec4 y4 = { 0, 1, 0, 0 };
     ///< The y axis, in homogeneous coordinates.
 static const vec4 z4 = { 0, 0, 1, 0 };
     ///< The z axis, in homogeneous coordinates.
+
+static const vec4 RGBA_CLEAR = { 0, 0, 0, 0 };
+    ///< A fully transparent color.
+static const vec4 RGBA_BLACK = { 0, 0, 0, 1 };
+    ///< An opaque, black color.
 
 /**
  * \brief Multiply a vector by a scalar.
