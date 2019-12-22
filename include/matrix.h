@@ -96,6 +96,15 @@ static inline void vec3_AddInPlace(const vec3 *u, vec3 *v)
 }
 
 /**
+ * \brief Compute the difference of `u` and `v` and store it in `v`.
+ */
+static inline void vec3_Subtract(const vec3 *u, const vec3 *v, vec3 *out)
+{
+    vec3_Scale(-1, v, out);
+    vec3_AddInPlace(u, out);
+}
+
+/**
  * \brief Return the norm of a vector.
  */
 static inline float vec3_Norm(const vec3 *v)

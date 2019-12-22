@@ -418,6 +418,14 @@ static inline View_DestroyFunction View_SetDestroyCallback(
 void View_Focus(View *view);
 
 /**
+ * \brief Get the `ViewManager` which is in charge of this view.
+ */
+static inline ViewManager *View_GetManager(View *view)
+{
+    return view->manager;
+}
+
+/**
  * \brief Get the dimensions of the window containing this view.
  */
 void View_GetWindowSize(const View *view, uint32_t *width, uint32_t *height);

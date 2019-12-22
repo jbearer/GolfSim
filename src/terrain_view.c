@@ -122,6 +122,22 @@ struct TerrainView {
         // distinguished because the z-coordinate of the point will be exactly 1
         // (since a mouse position that misses the terrain will hit the far
         // clipping plane).
+    vec3 ruler_start;
+        // When the user left-clicks and drags with no special tool selected, we
+        // will draw a ruler from where the first clicked to where the mouse is
+        // now. This point represents the point on the terrain where they first
+        // clicked.
+    TextField *ruler_text;
+        // While the user is still holding down the left mouse button during a
+        // click-and-drag, this will be a pointer to a text field displaying the
+        // length of the ruler.
+        //
+        // Otherwise, if no ruler is being drawn, this will be NULL.
+    bool draw_ruler;
+        // While the user is still holding down the left mouse button during a
+        // click-and-drag, this will be set to indicate that `ruler_start` is
+        // meaningful and we should draw a line from `ruler_start` to the
+        // current mouse position.
 
     HUD hud;
 
@@ -163,6 +179,12 @@ struct TerrainView {
     Axis z_axis;
     GLuint gl_axis_shaders;
     GLuint gl_axis_shader_mvp;
+
+    // Lines: ruler, hole maps, etc.
+    GLuint gl_lines_shaders;
+    GLuint gl_lines_shader_mvp;
+    GLuint gl_ruler_vao;
+    GLuint gl_ruler_buffer;
 
 #ifndef NDEBUG
     uint32_t dts[10];
@@ -294,6 +316,15 @@ static void TerrainView_UpdateMVP(TerrainView *view)
     {
         glUniformMatrix4fv(
             view->gl_axis_shader_mvp, 1, GL_TRUE,
+            mat4_Buffer(&view->view_projection)
+        );
+    }
+    glUseProgram(0);
+
+    glUseProgram(view->gl_lines_shaders);
+    {
+        glUniformMatrix4fv(
+            view->gl_lines_shader_mvp, 1, GL_TRUE,
             mat4_Buffer(&view->view_projection)
         );
     }
@@ -736,10 +767,6 @@ static void TerrainView_HandleClick(
     (void)button;
     (void)mods;
 
-    if (action == MOUSE_RELEASE) {
-        return;
-    }
-
     TerrainView *view = (TerrainView *)view_base;
 
     trace("handling %s %s at {%.2f, %.2f, %.2f}\n",
@@ -747,38 +774,71 @@ static void TerrainView_HandleClick(
         button == MOUSE_BUTTON_RIGHT  ? "right"  :
         button == MOUSE_BUTTON_MIDDLE ? "middle" :
                                         "unknown",
-        action == MOUSE_PRESS ? "click" :
-        action == MOUSE_DRAG  ? "drag"  :
-                                "unknown",
+        action == MOUSE_PRESS   ? "click" :
+        action == MOUSE_DRAG    ? "drag"  :
+        action == MOUSE_RELEASE ? "release" :
+                                  "unknown",
         view->mouse_position.x, view->mouse_position.y, view->mouse_position.z
     );
 
-    if (view->mouse_position.z == 1) {
-        // Click was not on the terrain, so we hit the back clipping plane.
-        return;
+    vec4 p;
+        // We will set `p` to the coordinates of the click in world space if the
+        // click hits the terrain, or a sentinel {-1, -1, -1, 1} if not.
+    if (view->mouse_position.z != 1) {
+        // Convert from normalized device coordinates to world coordinates by
+        // applying the inverse of the view-projection transformation.
+        p = (vec4){ view->mouse_position.x
+                  , view->mouse_position.y
+                  , view->mouse_position.z
+                  , 1 };
+        mat4_ApplyInPlace(&view->view_projection_inv, &p);
+
+        // The matrix transformation above leaves us in homogeneous coordinates.
+        // To get back to Cartesian coordinates, we divide by `w`.
+        vec4_ScaleInPlace(1/p.w, &p);
+        trace("{%.2f, %.2f, %.2f} in screen space is "
+              "{%.2f, %.2f, %.2f} in world space\n",
+            view->mouse_position.x,
+            view->mouse_position.y,
+            view->mouse_position.z,
+            p.x, p.y, p.z);
+
+        // If we think we hit the terrain, we better have a point that
+        // corresponds to some face.
+        if (!(0 <= p.x && p.x <
+                Terrain_FaceWidth(view->terrain)*view->terrain->xy_resolution)
+            // X is out of range.
+        ||
+            !(0 <= p.y && p.y <
+                Terrain_FaceHeight(view->terrain)*view->terrain->xy_resolution))
+            // Y is out of range.
+        {
+            // We got a click with a non-1 depth value, but after the inverse
+            // transformation it falls outside the perimeter of the terrain.
+            // This can happen due to small numeric instabilities in the
+            // coordinate transform when the click is actually inside the
+            // terrain, but very near the edge.
+            //
+            // We could try to correct for this by nudging such problem points
+            // back towards the edge of the terrain. However, the simpler
+            // solution is to just drop the click when this happens, and in
+            // practice it seems that these events are usually so close to the
+            // edge of the terrain that the user won't notice anything odd when
+            // they drop.
+            p = (vec4){-1, -1, -1, 1};
+        }
+    } else {
+        p = (vec4){-1, -1, -1, 1};
     }
 
-    // Convert from normalized device coordinates to world coordinates by
-    // applying the inverse of the view-projection transformation.
-    vec4 p = { view->mouse_position.x
-             , view->mouse_position.y
-             , view->mouse_position.z
-             , 1 };
-    mat4_ApplyInPlace(&view->view_projection_inv, &p);
-
-    // The matrix transformation above leaves us in homogeneous coordinates. To
-    // get back to Cartesian coordinates, we divide by `w`.
-    vec4_ScaleInPlace(1/p.w, &p);
-    trace("{%.2f, %.2f, %.2f} in screen space is {%.2f, %.2f, %.2f} in world space\n",
-        view->mouse_position.x, view->mouse_position.y, view->mouse_position.z,
-        p.x, p.y, p.z);
-
-    // If we think we hit the terrain, we better have a point that corresponds
-    // to some face.
-    ASSERT(0 <= p.x && p.x <
-        Terrain_FaceWidth(view->terrain)*view->terrain->xy_resolution);
-    ASSERT(0 <= p.y && p.y <
-        Terrain_FaceHeight(view->terrain)*view->terrain->xy_resolution);
+    if (p.x < 0 && action != MOUSE_RELEASE) {
+        return;
+            // Don't initiate any events (MOUSE_PRESS or MOUSE_DRAG) for clicks
+            // that missed the terrain. We will keep going if action is
+            // MOUSE_RELEASE, so actions which were triggered by a click within
+            // the terrain can complete even if the user has moved their mouse
+            // outside the terrain by the time they release.
+    }
 
     switch (view->hud.selection) {
         case HUD_RAISE_FACE: {
@@ -825,6 +885,10 @@ static void TerrainView_HandleClick(
         }
 
         case HUD_SET_MATERIAL: {
+            if (action != MOUSE_PRESS && action != MOUSE_DRAG) {
+                break;
+            }
+
             // Find the face _containing_ the cursor.
             uint16_t row = floor(p.y/view->terrain->xy_resolution);
             uint16_t col = floor(p.x/view->terrain->xy_resolution);
@@ -842,8 +906,105 @@ static void TerrainView_HandleClick(
             break;
         }
 
-        default:
+        case HUD_NONE: {
+            if (button == MOUSE_BUTTON_LEFT) {
+                if (action == MOUSE_PRESS) {
+                    // Start drawing a ruler from this point.
+                    view->ruler_start = (vec3){p.x, p.y, p.z + 1.0};
+                        // Elevate the ruler 1 yard above the terrain to make
+                        // sure it doesn't get depth-tested away.
+
+                    int32_t mouse_x, mouse_y;
+                    View_GetCursorPos((View *)view, &mouse_x, &mouse_y);
+
+                    // Create a text field to display the length of the ruler.
+                    ASSERT(view->ruler_text == NULL);
+                    view->ruler_text = TextField_New(
+                        sizeof(TextField), View_GetManager((View *)view),
+                        (View *)view,           // parent
+                        mouse_x, mouse_y - 5,   // top-left corner
+                        5, 1,                   // cols x rows
+                        15                      // font size
+                    );
+                    vec4 clear = { 0, 0, 0, 0 };
+                    TextField_SetBackgroundColor(view->ruler_text, &clear);
+                } else if (action == MOUSE_DRAG) {
+                    if (view->ruler_text == NULL) {
+                        ASSERT(!view->draw_ruler);
+                        break;
+                            // This case happens when we start a click off the
+                            // terrain and then drag the mouse onto the terrain.
+                            // It's reasonable to do nothing here.
+                    }
+
+                    // Draw a line from view->ruler_start to `p`.
+                    vec3 ruler_end = {p.x, p.y, p.z + 1.0};
+                        // Offset by one vertically so the ruler is
+                        // drawn in front of the terrain.
+
+                    glBindVertexArray(view->gl_ruler_vao);
+                    {
+                        glBindBuffer(GL_ARRAY_BUFFER, view->gl_ruler_buffer);
+                        {
+                            vec3 points[] = {view->ruler_start, ruler_end};
+                            glBufferData(
+                                GL_ARRAY_BUFFER,
+                                sizeof(points),
+                                points,
+                                GL_DYNAMIC_DRAW
+                            );
+                            glVertexAttribPointer(
+                                VERTEX_ATTRIB_POSITION,
+                                3,
+                                GL_FLOAT,
+                                GL_FALSE,
+                                0,
+                                0
+                            );
+                            glEnableVertexAttribArray(VERTEX_ATTRIB_POSITION);
+                        }
+                        glBindBuffer(GL_ARRAY_BUFFER, 0);
+                    }
+                    glBindVertexArray(0);
+
+                    view->draw_ruler = true;
+                        // Ensure that the line actually gets drawn next frame.
+
+                    // Update the text field with the new length of the ruler.
+                    ASSERT(view->ruler_text != NULL);
+                    vec3 ruler;
+                    vec3_Subtract(&ruler_end, &view->ruler_start, &ruler);
+                    TextField_Printf(view->ruler_text,
+                        "%d     ", (int)round(vec3_Norm(&ruler)));
+                            // Print the new length (rounded to the nearest
+                            // integer) followed by enough whitespace to clear
+                            // out the previous length. It's okay if we write
+                            // too many whitespace characters; the text field
+                            // will ignore them.
+                    TextField_Flush(view->ruler_text);
+                        // We have to flush since we didn't write a newline.
+                    TextField_SetCursor(view->ruler_text, 0);
+                        // Set the cursor back to the beginning of the line so
+                        // we overwrite this update the next time we update the
+                        // length.
+
+                } else if (action == MOUSE_RELEASE) {
+                    // Clear the ruler.
+                    view->draw_ruler = false;
+
+                    // Close the text field.
+                    if (view->ruler_text != NULL) {
+                        View_Close((View *)view->ruler_text);
+                        view->ruler_text = NULL;
+                    }
+                }
+            }
+
             break;
+        }
+
+        default:
+            ASSERT(false);
     }
 }
 
@@ -1006,6 +1167,16 @@ static void TerrainView_Render(View *view_base, uint32_t dt)
         glBindVertexArray(0);
     }
 
+    if (view->draw_ruler) {
+        // Draw ruler
+        glUseProgram(view->gl_lines_shaders);
+        glBindVertexArray(view->gl_ruler_vao);
+        {
+            glDrawArrays(GL_LINES, 0, 2);
+        }
+        glBindVertexArray(0);
+    }
+
     if (view->show_axes) {
         // Draw axes
         glUseProgram(view->gl_axis_shaders);
@@ -1032,6 +1203,9 @@ TerrainView *TerrainView_New(ViewManager *manager, Terrain *terrain)
     view->camera_zoom = 300;
     view->mouse_position = (vec3){ 0, 0, 1 };
     view->hud.selection = HUD_NONE;
+    view->ruler_start = (vec3){0, 0, 0};
+    view->ruler_text = NULL;
+    view->draw_ruler = false;
 
 #ifndef NDEBUG
     memset(view->dts, 0, sizeof(view->dts));
@@ -1053,6 +1227,10 @@ TerrainView *TerrainView_New(ViewManager *manager, Terrain *terrain)
     // Initialize color data
     glGenBuffers(1, &view->gl_terrain_colors);
     TerrainView_UpdateFaceColors(view);
+
+    // Initialize lines
+    glGenVertexArrays(1, &view->gl_ruler_vao);
+    glGenBuffers(1, &view->gl_ruler_buffer);
 
     ////////////////////////////////////////////////////////////////////////////
     // Initialize axis data
@@ -1095,6 +1273,12 @@ TerrainView *TerrainView_New(ViewManager *manager, Terrain *terrain)
         "shaders/axis_vertex.glsl", "shaders/axis_fragment.glsl");
     view->gl_axis_shader_mvp = glGetUniformLocation(
         view->gl_axis_shaders, "mvp");
+
+    // Lines shader
+    view->gl_lines_shaders = GL_LoadShaders(
+        "shaders/lines_vertex.glsl", "shaders/lines_fragment.glsl");
+    view->gl_lines_shader_mvp = glGetUniformLocation(
+        view->gl_lines_shaders, "mvp");
 
     ////////////////////////////////////////////////////////////////////////////
     // Initialize view matrices

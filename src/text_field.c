@@ -400,14 +400,13 @@ void TextField_Printf(TextField *text_field, const char *fmt, ...)
 
     char *end = TextField_CharAt(
         text_field, text_field->cursor_y, text_field->cursor_x + length - 1);
-    if (length >= text_field->width - text_field->cursor_x || *end == '\n') {
-        if (*end == '\n') {
-            *end = ' ';
-        }
+    if (*end == '\n') {
+        *end = ' ';
         TextField_Scroll(text_field);
         TextField_Flush(text_field);
     } else {
-        text_field->cursor_x += length;
+        text_field->cursor_x = UintMin(
+            text_field->cursor_x + length, text_field->width);
     }
 }
 
