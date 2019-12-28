@@ -6,6 +6,7 @@
 #include "errors.h"
 #include "gl.h"
 #include "matrix.h"
+#include "round.h"
 #include "terrain.h"
 #include "terrain_view.h"
 #include "text.h"
@@ -160,6 +161,11 @@ struct TerrainView {
         //
         // Left-multiply this matrix by the inverse of a model matrix to map
         // screen coordinates to model coordinates.
+
+    // Round in progress
+    Round round;
+    GLuint gl_ball_vao;
+    GLuint gl_ball_buffer;
 
     // Terrain GL objects
     bool show_terrain;
@@ -1138,6 +1144,25 @@ static void TerrainView_Animate(TerrainView *view, uint32_t dt)
 #endif
 
     ////////////////////////////////////////////////////////////////////////////
+    // Update the round in progress
+    //
+    Round_Step(&view->round, dt);
+    glBindVertexArray(view->gl_ball_vao);
+    {
+        glBindBuffer(GL_ARRAY_BUFFER, view->gl_ball_buffer);
+        {
+            vec3 p;
+            Round_GetBallPosition(&view->round, &p);
+            glBufferData(GL_ARRAY_BUFFER, sizeof(p), &p, GL_DYNAMIC_DRAW);
+            glVertexAttribPointer(
+                VERTEX_ATTRIB_POSITION, 3, GL_FLOAT, GL_FALSE, 0, 0);
+            glEnableVertexAttribArray(VERTEX_ATTRIB_POSITION);
+        }
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+    glBindVertexArray(0);
+
+    ////////////////////////////////////////////////////////////////////////////
     // Animate camera movement based on cursor position.
     //
 
@@ -1286,6 +1311,13 @@ static void TerrainView_Render(View *view_base, uint32_t dt)
         glBindVertexArray(0);
     }
 
+    glUseProgram(view->gl_lines_shaders);
+    glBindVertexArray(view->gl_ball_vao);
+    {
+        glDrawArrays(GL_POINTS, 0, 1);
+    }
+    glBindVertexArray(0);
+
     if (view->show_axes) {
         // Draw axes
         glUseProgram(view->gl_axis_shaders);
@@ -1425,6 +1457,13 @@ TerrainView *TerrainView_New(ViewManager *manager, Terrain *terrain)
     // Initialize holes
     //
     TerrainView_UpdateHoleLines(view);
+
+    ////////////////////////////////////////////////////////////////////////////
+    // Initialize round
+    //
+    glGenVertexArrays(1, &view->gl_ball_vao);
+    glGenBuffers(1, &view->gl_ball_buffer);
+    Round_Start(&view->round, view->terrain);
 
     ////////////////////////////////////////////////////////////////////////////
     // Initialize console
@@ -2024,6 +2063,85 @@ DECLARE_SUB_COMMANDS(terrain, "terrain", "inspect and manipulate the terrain",
     &terrain_define_hole, &terrain_info);
 
 ////////////////////////////////////////////////////////////////////////////////
+// Round
+//
+
+DECLARE_RUNNABLE(round_swing, "swing", "take a shot")
+{
+    if (argc != 3 && argc != 6) {
+        TextField_PutLine((TextField *)console,
+            "command 'round swing' takes three or six arguments");
+        return;
+    }
+
+    vec3 v0 = { atof(argv[0]), atof(argv[1]), atof(argv[2]) };
+    vec3 s0;
+    if (argc == 6) {
+        s0 = (vec3){ atof(argv[3]), atof(argv[4]), atof(argv[5]) };
+    } else {
+        s0 = zero3;
+    }
+
+    Round_Swing(&view->round, &v0, &s0);
+}
+
+DECLARE_RUNNABLE(round_drop, "drop",
+    "pick up the ball and put it somewhere else")
+{
+    if (argc != 2) {
+        TextField_PutLine((TextField *)console,
+            "command 'round drop' takes two arguments");
+        return;
+    }
+
+    vec2 x = { atof(argv[0]), atof(argv[1]) };
+    Round_SetBallPosition(&view->round, &x);
+}
+
+DECLARE_RUNNABLE(round_info_lie, "lie", "print information about the lie")
+{
+    (void)argc;
+    (void)argv;
+
+    vec3 x;
+    Round_GetBallPosition(&view->round, &x);
+    TextField_Printf((TextField *)console, "location: (%.2f, %.2f, %.2f)\n",
+        x.x, x.y, x.z);
+
+    const Material *lie = Terrain_SampleMaterial(view->terrain, x.x, x.y);
+    if (lie == NULL) {
+        TextField_PutLine((TextField *)console, "lie: out of bounds");
+    } else {
+        TextField_Printf((TextField *)console, "lie: %s\n", lie->name);
+    }
+}
+
+DECLARE_RUNNABLE(round_info_shot, "shot",
+    "print information about the in-progress or most recent shot")
+{
+    (void)argc;
+    (void)argv;
+
+    ShotStatus stats;
+    Round_GetShotStatistics(&view->round, &stats);
+
+    TextField_Printf((TextField *)console, "carry:         %.0f\n", stats.carry);
+    TextField_Printf((TextField *)console, "apex:          %.0f\n", stats.apex);
+    TextField_Printf((TextField *)console, "apex distance: %.0f\n", stats.apex_distance);
+    TextField_Printf((TextField *)console, "launch angle:  %.1f\n", stats.launch_angle*180/M_PI);
+    TextField_Printf((TextField *)console, "land angle:    %.1f\n", stats.land_angle*180/M_PI);
+    TextField_Printf((TextField *)console, "hang time:     %.0f\n", stats.hang_time/1000);
+    TextField_Printf((TextField *)console, "curve:         %.0f\n", stats.curve);
+}
+
+DECLARE_SUB_COMMANDS(round_info, "info",
+    "get information about the ongoing round",
+    &round_info_lie, &round_info_shot);
+
+DECLARE_SUB_COMMANDS(round_comm, "round", "play a round of golf",
+    &round_swing, &round_drop, &round_info);
+
+////////////////////////////////////////////////////////////////////////////////
 // HUD
 //
 
@@ -2086,6 +2204,6 @@ DECLARE_RUNNABLE(hud_select, "select", "select a tool from the HUD menu")
 DECLARE_SUB_COMMANDS(hud, "hud", "inspect and modify the state of the HUD menu",
     &hud_info, &hud_select);
 
-DECLARE_PROGRAM(&show, &hide, &window, &camera, &terrain, &hud);
+DECLARE_PROGRAM(&show, &hide, &window, &camera, &terrain, &round_comm, &hud);
 
 #undef PROGRAM_INFO

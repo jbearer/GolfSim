@@ -7,6 +7,7 @@
 #ifndef GOLF_MATRIX_H
 #define GOLF_MATRIX_H
 
+#include <float.h>
 #include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -40,14 +41,78 @@ static inline int64_t IntMax(int64_t x, int64_t y)
     return x >= y ? x : y;
 }
 
+static inline float FloatMin(float x, float y)
+{
+    return x <= y ? x : y;
+}
+
+static inline float FloatMax(float x, float y)
+{
+    return x >= y ? x : y;
+}
+
+static inline float FloatClamp(float x, float min, float max)
+{
+    if (x < min) {
+        return min;
+    } else if (x > max) {
+        return max;
+    } else {
+        return x;
+    }
+}
+
+static inline bool FloatEq(float x, float y)
+{
+    return fabs(y - x) < FLT_EPSILON;
+}
+
 typedef struct {
     float x;
     float y;
 } vec2;
 
+/**
+ * \brief Multiply a vector by a scalar.
+ */
+static inline void vec2_Scale(float scalar, const vec2 *in, vec2 *out)
+{
+    out->x = scalar*in->x;
+    out->y = scalar*in->y;
+}
+
+/**
+ * \brief Return the dot-product of `u` and `v`.
+ */
+static inline float vec2_Dot(const vec2 *u, const vec2 *v)
+{
+    return u->x*v->x + u->y*v->y;
+}
+
+/**
+ * \brief Return the norm of a vector.
+ */
 static inline float vec2_Norm(const vec2 *v)
 {
-    return sqrtf(v->x*v->x + v->y*v->y);
+    return sqrtf(vec2_Dot(v, v));
+}
+
+/**
+ * \brief Store a unit vector with the same direction as `v` in `out`.
+ */
+static inline void vec2_Normalize(const vec2 *v, vec2 *out)
+{
+    vec2_Scale(1.0/vec2_Norm(v), v, out);
+}
+
+/**
+ * \brief Compute a unit vector with the same direction as `v` and store it in `v`.
+ */
+static inline void vec2_NormalizeInPlace(vec2 *v)
+{
+    vec2 out;
+    vec2_Normalize(v, &out);
+    *v = out;
 }
 
 typedef struct {
@@ -59,6 +124,15 @@ typedef struct {
 static const vec3 x3 = { 1, 0, 0 }; ///< The x axis.
 static const vec3 y3 = { 0, 1, 0 }; ///< The y axis.
 static const vec3 z3 = { 0, 0, 1 }; ///< The z axis.
+static const vec3 zero3 = { 0, 0, 0 }; ///< The zero vector in three dimensions.
+
+/**
+ * \brief Determine if two vectors are equal.
+ */
+static inline bool vec3_Equal(const vec3 *u, const vec3 *v)
+{
+    return u->x == v->x && u->y == v->y && u->z == v->z;
+}
 
 /**
  * \brief Multiply a vector by a scalar.
@@ -71,6 +145,16 @@ static inline void vec3_Scale(float scalar, const vec3 *in, vec3 *out)
 }
 
 /**
+ * \brief Multiply a vector by a scalar, updating the original vector.
+ */
+static inline void vec3_ScaleInPlace(float scalar, vec3 *v)
+{
+    vec3 out;
+    vec3_Scale(scalar, v, &out);
+    *v = out;
+}
+
+/**
  * \brief Store the cross-product of `u` and `v` in `out`.
  */
 static inline void vec3_Cross(const vec3 *u, const vec3 *v, vec3 *out)
@@ -78,6 +162,24 @@ static inline void vec3_Cross(const vec3 *u, const vec3 *v, vec3 *out)
     out->x = u->y*v->z - u->z*v->y;
     out->y = u->z*v->x - u->x*v->z;
     out->z = u->x*v->y - u->y*v->x;
+}
+
+/**
+ * \brief Compute the cross-product of `u` and `v` and store it in `v`.
+ */
+static inline void vec3_CrossInPlace(const vec3 *u, vec3 *v)
+{
+    vec3 out;
+    vec3_Cross(u, v, &out);
+    *v = out;
+}
+
+/**
+ * \brief Return the dot-product of `u` and `v`.
+ */
+static inline float vec3_Dot(const vec3 *u, const vec3 *v)
+{
+    return u->x*v->x + u->y*v->y + u->z*v->z;
 }
 
 /**
@@ -114,7 +216,7 @@ static inline void vec3_Subtract(const vec3 *u, const vec3 *v, vec3 *out)
  */
 static inline float vec3_Norm(const vec3 *v)
 {
-    return sqrtf(v->x*v->x + v->y*v->y + v->z*v->z);
+    return sqrtf(vec3_Dot(v, v));
 }
 
 /**

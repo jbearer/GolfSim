@@ -233,6 +233,19 @@ static inline const Hole *Terrain_GetConstHole(
 float Terrain_SampleHeight(const Terrain *terrain, float x, float y);
 
 /**
+ * \brief Get the material of the terrain at a point.
+ *
+ * \param x     x-coordinate of the point to sample.
+ * \param y     y-coordinate of the point to sample.
+ *
+ * If the point (x, y) is within the bounds of the terrain, the return value is
+ * a pointer to the material on which the point lies. Otherwise, the return
+ * value is `NULL` indicating "out of bounds".
+ */
+const Material *Terrain_SampleMaterial(
+    const Terrain *terrain, float x, float y);
+
+/**
  * \brief Initialize a terrain object.
  *
  * \param width         The width of the terrain in faces.

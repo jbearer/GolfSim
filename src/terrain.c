@@ -211,8 +211,11 @@ float Terrain_SampleHeight(const Terrain *terrain, float x, float y)
     // Get the coordinates relative to the face containing the point, so we can
     // figure out which triangle we will interpolate within.
     float row, col;
-    float u = modff(x/terrain->xy_resolution, &row);
-    float v = modff(y/terrain->xy_resolution, &col);
+    float u = modff(x/terrain->xy_resolution, &col);
+    float v = modff(y/terrain->xy_resolution, &row);
+
+    ASSERT(0 <= u && u < 1);
+    ASSERT(0 <= v && v < 1);
 
     // We can think of the face as being partitioned into two triangles by the
     // line `u = v`:
@@ -234,14 +237,14 @@ float Terrain_SampleHeight(const Terrain *terrain, float x, float y)
     vec2 a, b, c;
     if (v > u) {
         // Top left triangle
-        a = (vec2){ col,     row + 1 };
-        b = (vec2){ col,     row     };
-        c = (vec2){ col + 1, row + 1 };
+        a = (vec2){ 0, 1 };
+        b = (vec2){ 0, 0 };
+        c = (vec2){ 1, 1 };
     } else {
         // Bottom right triangle
-        a = (vec2){ col + 1, row     };
-        b = (vec2){ col + 1, row + 1 };
-        c = (vec2){ col,     row     };
+        a = (vec2){ 1, 0 };
+        b = (vec2){ 1, 1 };
+        c = (vec2){ 0, 0 };
     }
 
     // Now do the actual interpolation. The result will be a weighted average of
@@ -270,9 +273,28 @@ float Terrain_SampleHeight(const Terrain *terrain, float x, float y)
                ((b.y - c.y)*(a.x - c.x) + (c.x - b.x)*(a.y - c.y));
     float Wc = 1 - Wa - Wb;
 
-    return Wa*Terrain_GetVertex(terrain, round(a.y), round(a.x)) +
-           Wb*Terrain_GetVertex(terrain, round(b.y), round(b.x)) +
-           Wc*Terrain_GetVertex(terrain, round(c.y), round(c.x));
+    ASSERT(Wa >= 0 && Wb >= 0 && Wc >= 0);
+        // If any of the weights are negative, it means the point falls outside
+        // the triangle in which we're interpolating. This should never happen
+        // since we choose the triangle such that it contains the point.
+
+    float result =
+        Wa*Terrain_GetVertex(terrain, round(row + a.y), round(col + a.x)) +
+        Wb*Terrain_GetVertex(terrain, round(row + b.y), round(col + b.x)) +
+        Wc*Terrain_GetVertex(terrain, round(row + c.y), round(col + c.x));
+    return result;
+}
+
+const Material *Terrain_SampleMaterial(const Terrain *terrain, float x, float y)
+{
+    int32_t row = floor(y/terrain->xy_resolution);
+    int32_t col = floor(x/terrain->xy_resolution);
+    if (row < 0 || row >= Terrain_FaceHeight(terrain) ||
+        col < 0 || col >= Terrain_FaceWidth(terrain)) {
+        return NULL;
+    }
+
+    return Terrain_GetConstFace(terrain, row, col)->material;
 }
 
 void Terrain_DefineHole(

@@ -157,6 +157,11 @@ int main(int argc, char *const *argv)
         // with intensity given by the source alpha channel, and take the
         // destination color with the remaining intensity (1 - source alpha).
 
+    // Make points drawn with GL_POINTS a bit easier to see.
+    glHint(GL_POINT_SMOOTH_HINT, GL_NICEST);
+    glEnable(GL_POINT_SMOOTH);
+    glPointSize(3);
+
     // Main loop
     while (!glfwWindowShouldClose(window)) {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
